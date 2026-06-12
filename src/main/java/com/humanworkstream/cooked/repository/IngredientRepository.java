@@ -5,9 +5,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
 
-public interface IngredientRepository extends JpaRepository<Ingredient, Integer> {
+public interface IngredientRepository extends JpaRepository<Ingredient, Long> {
 
-    List<Ingredient> findByRecipeIdOrderByPositionAsc(Integer recipeId);
+    // All built-ins plus ingredients created by this user
+    List<Ingredient> findByIsBuiltinTrueOrCreatedByOrderByNameAsc(Long createdBy);
 
-    void deleteByRecipeId(Integer recipeId);
+    boolean existsByNameIgnoreCase(String name);
 }

@@ -1,13 +1,11 @@
 package com.humanworkstream.cooked.repository;
 
-import com.humanworkstream.cooked.entity.User;
+import com.humanworkstream.cooked.entity.AppUser;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-import java.util.Optional;
-
-public interface UserRepository extends JpaRepository<User, Integer> {
-
-    Optional<User> findOneByEmail(String email);
-
-    boolean existsByEmail(String email);
+/**
+ * @deprecated Use {@link AppUserRepository}.
+ */
+@Deprecated(forRemoval = true)
+public interface UserRepository extends JpaRepository<AppUser, Long> {
 }

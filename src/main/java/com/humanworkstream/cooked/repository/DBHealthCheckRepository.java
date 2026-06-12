@@ -11,6 +11,6 @@ public interface DBHealthCheckRepository extends JpaRepository<Recipe, Long> {
     @Query(value = "SELECT 1", nativeQuery = true)
     Integer checkDB();
 
-    @Query(value = "SELECT COUNT(*) FROM USERS", nativeQuery = true)
+    @Query(value = "SELECT COUNT(*) FROM app_user", nativeQuery = true)
     Integer checkSchema();
 }

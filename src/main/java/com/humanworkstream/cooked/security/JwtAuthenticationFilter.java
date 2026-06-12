@@ -29,9 +29,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String token = header.substring(7);
             if (jwtUtil.isValid(token)) {
                 Claims claims = jwtUtil.parse(token);
-                UserPrincipal principal = new UserPrincipal(
-                        claims.getSubject(),
-                        claims.get("userId", Integer.class));
+                // jjwt serialises Long as Integer when value fits; use Number to be safe
+                long userId = ((Number) claims.get("userId")).longValue();
+                UserPrincipal principal = new UserPrincipal(claims.getSubject(), userId);
                 var auth = new UsernamePasswordAuthenticationToken(
                         principal, null, Collections.emptyList());
                 SecurityContextHolder.getContext().setAuthentication(auth);

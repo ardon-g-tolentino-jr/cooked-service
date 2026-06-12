@@ -1,6 +1,6 @@
 package com.humanworkstream.cooked.config;
 
-import com.humanworkstream.cooked.enumeration.Difficulty;
+import com.humanworkstream.cooked.enumeration.UnitType;
 import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Converter;
 
@@ -11,8 +11,8 @@ import jakarta.persistence.Converter;
 public class PostgresEnumConverters {
 
     @Converter(autoApply = true)
-    public static class DifficultyConverter implements AttributeConverter<Difficulty, String> {
-        @Override public String convertToDatabaseColumn(Difficulty attr) { return attr == null ? null : attr.getValue(); }
-        @Override public Difficulty convertToEntityAttribute(String db) { return db == null ? null : Difficulty.fromValue(db); }
+    public static class UnitTypeConverter implements AttributeConverter<UnitType, String> {
+        @Override public String convertToDatabaseColumn(UnitType attr) { return attr == null ? null : attr.getValue(); }
+        @Override public UnitType convertToEntityAttribute(String db) { return db == null ? null : UnitType.fromValue(db); }
     }
 }

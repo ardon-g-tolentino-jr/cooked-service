@@ -1,10 +1,18 @@
 package com.humanworkstream.cooked.controller;
 
-import com.humanworkstream.cooked.entity.Ingredient;
+import com.humanworkstream.cooked.dto.IngredientCreateRequest;
+import com.humanworkstream.cooked.dto.IngredientResponse;
+import com.humanworkstream.cooked.security.SecurityUtils;
 import com.humanworkstream.cooked.service.IngredientService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
@@ -14,27 +22,16 @@ import java.util.List;
 public class IngredientController {
 
     private final IngredientService ingredientService;
+    private final SecurityUtils securityUtils;
 
     @GetMapping
-    public ResponseEntity<List<Ingredient>> getByRecipeId(@RequestParam Integer recipeId) {
-        return ResponseEntity.ok(ingredientService.findByRecipeId(recipeId));
+    public ResponseEntity<List<IngredientResponse>> list() {
+        return ResponseEntity.ok(ingredientService.listForUser(securityUtils.getCurrentUserId()));
     }
 
     @PostMapping
-    public ResponseEntity<Ingredient> create(@RequestBody Ingredient ingredient) {
-        return ResponseEntity.ok(ingredientService.create(ingredient));
-    }
-
-    @PatchMapping("/{id}")
-    public ResponseEntity<Ingredient> patch(@PathVariable Integer id, @RequestBody Ingredient ingredient) {
-        return ingredientService.patch(id, ingredient)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
-    }
-
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Integer id) {
-        ingredientService.delete(id);
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<IngredientResponse> create(@Valid @RequestBody IngredientCreateRequest req) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ingredientService.create(securityUtils.getCurrentUserId(), req));
     }
 }

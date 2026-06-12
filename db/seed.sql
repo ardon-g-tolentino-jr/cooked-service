@@ -4,32 +4,72 @@
 --
 -- Seed user password is "Password123!" (BCrypt, cost 10).
 
-SET search_path TO cooked_service;
+SET search_path TO cooked;
 
-INSERT INTO users (id, email, password, name)
-VALUES (1, 'chef@example.com', '$2y$10$MaYxR0ZQ3xbZVIkkL2K1B.WG8sW1aRh8QFvWaOQDo96DBgR5HdGwe', 'Demo Chef')
+-- ── Vocabulary ─────────────────────────────────
+
+INSERT INTO mood (name) VALUES
+    ('comfort'), ('quick'), ('healthy'), ('indulgent'), ('festive'), ('light')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO cuisine (name) VALUES
+    ('Filipino'), ('French'), ('Japanese'), ('Italian'), ('Mexican'),
+    ('Indian'), ('Chinese'), ('American'), ('Thai'), ('Mediterranean')
+ON CONFLICT DO NOTHING;
+
+-- ── Demo user (password: Password123!) ─────────
+
+INSERT INTO app_user (id, email, display_name, handle, password_hash)
+VALUES (1, 'chef@example.com', 'Demo Chef', 'demochef',
+        '$2a$10$MaYxR0ZQ3xbZVIkkL2K1B.WG8sW1aRh8QFvWaOQDo96DBgR5HdGwe')
 ON CONFLICT (email) DO NOTHING;
 
-INSERT INTO recipe (id, user_id, name, description, cuisine, difficulty, prep_minutes, cook_minutes, servings, instructions)
+-- ── Builtin ingredients ─────────────────────────
+
+INSERT INTO ingredient (id, name, category, kcal_per_gram, grams_per_piece, is_builtin)
 VALUES
-    (1, 1, 'Chicken Adobo', 'Classic Filipino braised chicken in soy sauce and vinegar.', 'Filipino', 'easy', 15, 45, 4,
-     '1. Marinate chicken in soy sauce and garlic for 30 minutes.\n2. Brown chicken in oil.\n3. Add vinegar, bay leaves, and peppercorns; simmer 40 minutes.\n4. Serve over rice.'),
-    (2, 1, 'Beef Bourguignon', 'Slow-braised beef in red wine.', 'French', 'hard', 40, 180, 6,
-     '1. Sear beef in batches.\n2. Sauté mirepoix; deglaze with red wine.\n3. Braise covered at 160°C for 3 hours.\n4. Finish with pearl onions and mushrooms.')
+    (1, 'Chicken thighs (boneless)',  'Meat',     0.209, NULL, TRUE),
+    (2, 'Soy sauce',                  'Condiment',0.006, NULL, TRUE),
+    (3, 'Cane vinegar',               'Condiment',0.018, NULL, TRUE),
+    (4, 'Garlic clove',               'Vegetable',1.490, 5.0,  TRUE),
+    (5, 'Cooked white rice',          'Grain',    0.130, NULL, TRUE),
+    (6, 'Beef chuck',                 'Meat',     2.500, NULL, TRUE),
+    (7, 'Red wine',                   'Beverage', 0.070, NULL, TRUE),
+    (8, 'Button mushrooms',           'Vegetable',0.220, NULL, TRUE),
+    (9, 'Olive oil',                  'Oil',      8.840, NULL, TRUE),
+    (10,'Egg',                        'Protein',  1.430, 50.0, TRUE)
+ON CONFLICT (name) DO NOTHING;
+
+-- ── Sample recipes ──────────────────────────────
+
+INSERT INTO recipe (id, name, owner_user_id, cuisine, prep_time_min, servings, is_community)
+VALUES
+    (1, 'Chicken Adobo',    1, 'Filipino', 15, 4, FALSE),
+    (2, 'Beef Bourguignon', 1, 'French',   40, 6, FALSE)
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO ingredient (recipe_id, name, quantity, unit, position)
-VALUES
-    (1, 'Chicken thighs', '1', 'kg', 1),
-    (1, 'Soy sauce', '120', 'ml', 2),
-    (1, 'Cane vinegar', '80', 'ml', 3),
-    (1, 'Garlic cloves', '6', NULL, 4),
-    (1, 'Bay leaves', '3', NULL, 5),
-    (2, 'Beef chuck', '1.5', 'kg', 1),
-    (2, 'Red wine', '750', 'ml', 2),
-    (2, 'Pearl onions', '250', 'g', 3),
-    (2, 'Button mushrooms', '300', 'g', 4);
+INSERT INTO recipe_mood (recipe_id, mood) VALUES
+    (1, 'comfort'), (1, 'quick'),
+    (2, 'comfort'), (2, 'indulgent')
+ON CONFLICT DO NOTHING;
 
--- Keep identity sequences ahead of explicitly inserted ids
-SELECT setval(pg_get_serial_sequence('users', 'id'), GREATEST(100000, (SELECT MAX(id) FROM users)));
-SELECT setval(pg_get_serial_sequence('recipe', 'id'), GREATEST(100000, (SELECT MAX(id) FROM recipe)));
+INSERT INTO recipe_ingredient (recipe_id, ingredient_id, grams) VALUES
+    (1, 1, 800), (1, 2, 120), (1, 3, 80), (1, 4, 30),
+    (2, 6, 1500),(2, 7, 750), (2, 8, 300)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO recipe_instruction (recipe_id, step_no, instruction) VALUES
+    (1, 1, 'Marinate chicken in soy sauce and garlic for 30 minutes.'),
+    (1, 2, 'Brown chicken in oil over medium-high heat.'),
+    (1, 3, 'Add vinegar, bay leaves, and peppercorns; simmer 40 minutes.'),
+    (1, 4, 'Serve over steamed rice.'),
+    (2, 1, 'Sear beef chuck in batches until browned.'),
+    (2, 2, 'Sauté mirepoix; deglaze with red wine.'),
+    (2, 3, 'Braise covered at 160°C for 3 hours.'),
+    (2, 4, 'Finish with mushrooms and adjust seasoning.')
+ON CONFLICT DO NOTHING;
+
+-- Keep identity sequences ahead of seeded ids
+SELECT setval(pg_get_serial_sequence('app_user',  'id'), GREATEST(1000, (SELECT MAX(id) FROM app_user)));
+SELECT setval(pg_get_serial_sequence('ingredient','id'), GREATEST(1000, (SELECT MAX(id) FROM ingredient)));
+SELECT setval(pg_get_serial_sequence('recipe',    'id'), GREATEST(1000, (SELECT MAX(id) FROM recipe)));
