@@ -54,7 +54,7 @@ Every change follows this sequence:
 
 1. **Branch first** — create a feature or bugfix branch before making any changes.
 2. **Migration script** — create `db/<branch-name>/<number>_<description>.sql` for any schema change (e.g. `db/feat-recipes-tags/01_add_tag_table.sql`). Scripts must be idempotent (`CREATE TABLE IF NOT EXISTS`, `INSERT … ON CONFLICT DO NOTHING`).
-3. **Update setup.sql** — keep `db/setup.sql` current as the canonical fresh-install schema.
+3. **Update setup.sql** — keep `db/setup.sql` current as the canonical fresh-install schema. It is the **single source of truth for both repos**: the cooked-ui repo carries no setup.sql (only its catalog `seed.sql` and historical migrations). All schema changes and migrations happen here.
 4. **Verify `/dist`** — always confirm the `/dist` folder is current and correct before committing frontend changes.
 5. **Release notes** — create `release/<branch-name>.md` with a summary of what changed and why.
 6. **Local testing only** — test against a local DB and local backend. Do not spin up remote instances for testing.
@@ -92,8 +92,8 @@ Every change follows this sequence:
 
 ### Database
 
-Schema name: `cooked_service` (set globally via `spring.jpa.properties.hibernate.default_schema`).  
-`ddl-auto=none` — schema is managed externally via `db/setup.sql`; Hibernate never creates or alters tables. Identity columns start at 100000.
+Schema name: `cooked` (set globally via `spring.jpa.properties.hibernate.default_schema`).  
+`ddl-auto=none` — schema is managed externally via `db/setup.sql`; Hibernate never creates or alters tables. Identity columns start at 100000. The app connects as `cooked_user` (CRUD, no DDL); `cooked_readonly` exists for reporting/debugging.
 
 ### Authentication & Authorization
 
