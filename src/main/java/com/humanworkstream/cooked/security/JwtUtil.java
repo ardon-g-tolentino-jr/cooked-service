@@ -24,7 +24,7 @@ public class JwtUtil {
         this.expirationMs = expirationMs;
     }
 
-    public String generate(String email, int userId) {
+    public String generate(String email, long userId) {
         return Jwts.builder()
                 .subject(email)
                 .claim("userId", userId)
