@@ -32,6 +32,10 @@ public class AppUser {
     @Column(name = "password_hash")
     private String passwordHash;
 
+    @Convert(converter = com.humanworkstream.cooked.converter.UserRoleConverter.class)
+    @Column(name = "role", nullable = false)
+    private com.humanworkstream.cooked.enumeration.UserRole role = com.humanworkstream.cooked.enumeration.UserRole.USER;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 

@@ -14,4 +14,16 @@ public class SecurityUtils {
         }
         return null;
     }
+
+    public String getCurrentUserRole() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof UserPrincipal p) {
+            return p.role();
+        }
+        return null;
+    }
+
+    public boolean isAdmin() {
+        return "ADMIN".equals(getCurrentUserRole());
+    }
 }

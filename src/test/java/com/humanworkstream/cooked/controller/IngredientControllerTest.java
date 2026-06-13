@@ -41,7 +41,7 @@ class IngredientControllerTest {
 
     private IngredientResponse stub(long id) {
         return new IngredientResponse(id, "Soy Sauce", "Condiment",
-                BigDecimal.valueOf(0.6), null, true, null, null,
+                BigDecimal.valueOf(0.6), null, true, null, null, null,
                 BigDecimal.valueOf(0.6), null);
     }
 
@@ -59,7 +59,7 @@ class IngredientControllerTest {
     @Test
     void create_validBody_returns201() throws Exception {
         when(securityUtils.getCurrentUserId()).thenReturn(1L);
-        when(ingredientService.create(eq(1L), any(IngredientCreateRequest.class))).thenReturn(stub(2L));
+        when(ingredientService.create(eq(1L), eq(false), any(IngredientCreateRequest.class))).thenReturn(stub(2L));
 
         mockMvc.perform(post("/ingredients")
                         .contentType(MediaType.APPLICATION_JSON)

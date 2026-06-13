@@ -34,7 +34,7 @@ class AuthControllerTest {
     @MockBean JwtUtil jwtUtil;
 
     private AuthResponse stubAuth() {
-        return new AuthResponse("jwt-token", 1L, "chef@example.com", "Demo Chef");
+        return new AuthResponse("jwt-token", 1L, "chef@example.com", "Demo Chef", "ADMIN");
     }
 
     @Test
