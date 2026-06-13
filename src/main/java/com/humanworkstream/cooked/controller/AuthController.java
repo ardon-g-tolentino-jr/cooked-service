@@ -1,6 +1,7 @@
 package com.humanworkstream.cooked.controller;
 
 import com.humanworkstream.cooked.dto.AuthResponse;
+import com.humanworkstream.cooked.dto.ForgotPasswordRequest;
 import com.humanworkstream.cooked.dto.GoogleLoginRequest;
 import com.humanworkstream.cooked.dto.LoginRequest;
 import com.humanworkstream.cooked.dto.RegisterRequest;
@@ -13,6 +14,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/auth")
@@ -34,5 +37,12 @@ public class AuthController {
     @PostMapping("/google")
     public ResponseEntity<AuthResponse> google(@Valid @RequestBody GoogleLoginRequest req) {
         return ResponseEntity.ok(appUserService.loginWithGoogle(req.idToken()));
+    }
+
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Map<String, String>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest req) {
+        appUserService.forgotPassword(req.email());
+        // Always 200 with the same message — never reveal whether the email is registered.
+        return ResponseEntity.ok(Map.of("message", "If that email is registered, a temporary password has been sent."));
     }
 }

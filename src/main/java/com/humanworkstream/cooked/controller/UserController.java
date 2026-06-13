@@ -1,5 +1,6 @@
 package com.humanworkstream.cooked.controller;
 
+import com.humanworkstream.cooked.dto.ChangePasswordRequest;
 import com.humanworkstream.cooked.dto.IngredientResponse;
 import com.humanworkstream.cooked.dto.UserIngredientEditRequest;
 import com.humanworkstream.cooked.dto.UserPatchRequest;
@@ -10,6 +11,7 @@ import com.humanworkstream.cooked.security.SecurityUtils;
 import com.humanworkstream.cooked.service.AppUserService;
 import com.humanworkstream.cooked.service.IngredientService;
 import com.humanworkstream.cooked.service.UserSettingsService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/users")
@@ -41,6 +44,12 @@ public class UserController {
     @PatchMapping("/me")
     public ResponseEntity<UserResponse> patchMe(@RequestBody UserPatchRequest req) {
         return ResponseEntity.ok(appUserService.patchMe(securityUtils.getCurrentUserId(), req));
+    }
+
+    @PutMapping("/me/password")
+    public ResponseEntity<Map<String, String>> changePassword(@Valid @RequestBody ChangePasswordRequest req) {
+        appUserService.changePassword(securityUtils.getCurrentUserId(), req.currentPassword(), req.newPassword());
+        return ResponseEntity.ok(Map.of("message", "Password updated."));
     }
 
     @GetMapping("/me/settings")

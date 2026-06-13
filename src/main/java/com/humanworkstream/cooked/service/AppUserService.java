@@ -10,6 +10,7 @@ import com.humanworkstream.cooked.entity.AppUser;
 import com.humanworkstream.cooked.repository.AppUserRepository;
 import com.humanworkstream.cooked.security.GoogleTokenVerifier;
 import com.humanworkstream.cooked.security.JwtUtil;
+import com.humanworkstream.cooked.security.PasswordGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -28,6 +29,7 @@ public class AppUserService {
     private final PasswordEncoder passwordEncoder;
     private final SubscriptionGateService subscriptionGate;
     private final GoogleTokenVerifier googleTokenVerifier;
+    private final EmailService emailService;
 
     @Transactional
     public AuthResponse register(RegisterRequest req) {
@@ -43,8 +45,7 @@ public class AppUserService {
         user.setPasswordHash(passwordEncoder.encode(req.password()));
         user = appUserRepository.save(user);
         log.info("[AppUserService] Registered userId={}", user.getId());
-        String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name());
-        return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(), user.getRole().name());
+        return authResponse(user);
     }
 
     @Transactional(readOnly = true)
@@ -57,8 +58,7 @@ public class AppUserService {
         // Gate: only users with active Cooked access (redeemed code or subscription) may sign in.
         subscriptionGate.assertActiveAccess(user.getEmail());
         log.info("[AppUserService] Login userId={}", user.getId());
-        String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name());
-        return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(), user.getRole().name());
+        return authResponse(user);
     }
 
     /**
@@ -92,8 +92,52 @@ public class AppUserService {
             return appUserRepository.save(u);
         });
         log.info("[AppUserService] Google login userId={}", user.getId());
+        return authResponse(user);
+    }
+
+    /** Reset to a system-generated temp password and email it. Silent if the email is unknown or SSO-only. */
+    @Transactional
+    public void forgotPassword(String email) {
+        appUserRepository.findOneByEmail(email).ifPresent(user -> {
+            if (user.getPasswordHash() == null) {
+                log.info("[AppUserService] forgot-password for SSO-only userId={} — skipped", user.getId());
+                return;
+            }
+            String temp = PasswordGenerator.generate(12);
+            user.setPasswordHash(passwordEncoder.encode(temp));
+            user.setPasswordTemporary(true);
+            appUserRepository.save(user);
+            log.info("[AppUserService] issued temp password for userId={}", user.getId());
+            emailService.send(user.getEmail(), "Your Cooked temporary password",
+                    "Hi " + user.getDisplayName() + ",\n\n" +
+                    "We received a request to reset your Cooked password. Sign in with this temporary password:\n\n" +
+                    "    " + temp + "\n\n" +
+                    "You'll be asked to set a new password right after signing in.\n\n" +
+                    "If you didn't request this, you can ignore this email.\n\n— Cooked");
+        });
+        // Always return normally — never reveal whether the email is registered.
+    }
+
+    /** Change the signed-in user's password (verifying the current one) and clear the temp flag. */
+    @Transactional
+    public void changePassword(Long userId, String currentPassword, String newPassword) {
+        AppUser user = findById(userId);
+        if (user.getPasswordHash() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "This account uses Google sign-in and has no password.");
+        }
+        if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Current password is incorrect");
+        }
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        user.setPasswordTemporary(false);
+        appUserRepository.save(user);
+        log.info("[AppUserService] changed password for userId={}", user.getId());
+    }
+
+    private AuthResponse authResponse(AppUser user) {
         String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name());
-        return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(), user.getRole().name());
+        return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(),
+                user.getRole().name(), user.isPasswordTemporary());
     }
 
     @Transactional(readOnly = true)
