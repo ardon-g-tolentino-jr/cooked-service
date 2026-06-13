@@ -33,7 +33,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 long userId = ((Number) claims.get("userId")).longValue();
                 String role = claims.get("role", String.class);
                 if (role == null) role = "USER";
-                UserPrincipal principal = new UserPrincipal(claims.getSubject(), userId, role);
+                boolean trial = Boolean.TRUE.equals(claims.get("trial", Boolean.class));
+                UserPrincipal principal = new UserPrincipal(claims.getSubject(), userId, role, trial);
                 var auth = new UsernamePasswordAuthenticationToken(
                         principal, null,
                         java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_" + role)));

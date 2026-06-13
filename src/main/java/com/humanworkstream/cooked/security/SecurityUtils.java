@@ -26,4 +26,9 @@ public class SecurityUtils {
     public boolean isAdmin() {
         return "ADMIN".equals(getCurrentUserRole());
     }
+
+    public boolean isTrial() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getPrincipal() instanceof UserPrincipal p && p.trial();
+    }
 }

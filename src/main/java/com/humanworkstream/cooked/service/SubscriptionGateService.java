@@ -87,10 +87,11 @@ public class SubscriptionGateService {
     }
 
     /** Deny login unless the email has an active access record for this service. Fail-closed. */
-    public void assertActiveAccess(String email) {
+    /** @return true if the matched active COOKED access came from a TRIAL registration code. */
+    public boolean assertActiveAccess(String email) {
         if (!enabled) {
             log.warn("[SubscriptionGate] disabled — skipping access check for {}", email);
-            return;
+            return false;
         }
         List<AccessRecord> records;
         try {
@@ -110,12 +111,17 @@ public class SubscriptionGateService {
             log.error("[SubscriptionGate] subscription service unreachable during login for {}", email, e);
             throw unavailable();
         }
-        boolean hasAccess = records != null && records.stream().anyMatch(r ->
-                Boolean.TRUE.equals(r.isActive()) && serviceCode.equalsIgnoreCase(r.serviceCode()));
-        if (!hasAccess) {
+        List<AccessRecord> cookedAccess = records == null ? List.of() : records.stream()
+                .filter(r -> Boolean.TRUE.equals(r.isActive()) && serviceCode.equalsIgnoreCase(r.serviceCode()))
+                .toList();
+        if (cookedAccess.isEmpty()) {
             log.warn("[SubscriptionGate] no active {} access for {}", serviceCode, email);
             throw noAccess();
         }
+        boolean trial = cookedAccess.stream()
+                .anyMatch(r -> r.regCode() != null && r.regCode().toUpperCase().contains("TRIAL"));
+        if (trial) log.info("[SubscriptionGate] {} is on a TRIAL access code", email);
+        return trial;
     }
 
     private ResponseStatusException noAccess() {
@@ -145,6 +151,7 @@ public class SubscriptionGateService {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record AccessRecord(
             @JsonProperty("serviceCode") String serviceCode,
-            @JsonProperty("isActive") Boolean isActive) {
+            @JsonProperty("isActive") Boolean isActive,
+            @JsonProperty("regCode") String regCode) {
     }
 }

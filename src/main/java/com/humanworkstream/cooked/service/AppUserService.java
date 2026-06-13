@@ -41,13 +41,14 @@ public class AppUserService {
         user.setEmail(req.email());
         user.setDisplayName(req.displayName());
         user.setPasswordHash(passwordEncoder.encode(req.password()));
+        // TRIAL tier: the registration code itself names the trial.
+        user.setTrial(req.registrationCode() != null && req.registrationCode().toUpperCase().contains("TRIAL"));
         user = appUserRepository.save(user);
-        log.info("[AppUserService] Registered userId={}", user.getId());
-        String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name());
-        return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(), user.getRole().name());
+        log.info("[AppUserService] Registered userId={} trial={}", user.getId(), user.isTrial());
+        return authResponse(user);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public AuthResponse login(LoginRequest req) {
         AppUser user = appUserRepository.findOneByEmail(req.email())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials"));
@@ -55,10 +56,11 @@ public class AppUserService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
         }
         // Gate: only users with active Cooked access (redeemed code or subscription) may sign in.
-        subscriptionGate.assertActiveAccess(user.getEmail());
-        log.info("[AppUserService] Login userId={}", user.getId());
-        String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name());
-        return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(), user.getRole().name());
+        // Returns whether that access is a TRIAL code; refresh the stored flag each login.
+        user.setTrial(subscriptionGate.assertActiveAccess(user.getEmail()));
+        appUserRepository.save(user);
+        log.info("[AppUserService] Login userId={} trial={}", user.getId(), user.isTrial());
+        return authResponse(user);
     }
 
     /**
@@ -82,18 +84,25 @@ public class AppUserService {
 
         // Gate: only emails with active Cooked access may sign in (same rule as password login).
         // Checked before creating the local user so blocked accounts leave no orphan row.
-        subscriptionGate.assertActiveAccess(email);
+        boolean trial = subscriptionGate.assertActiveAccess(email);
 
         AppUser user = appUserRepository.findOneByEmail(email).orElseGet(() -> {
             AppUser u = new AppUser();
             u.setEmail(email);
             u.setDisplayName(name);
             // SSO account — password_hash stays null
-            return appUserRepository.save(u);
+            return u;
         });
-        log.info("[AppUserService] Google login userId={}", user.getId());
-        String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name());
-        return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(), user.getRole().name());
+        user.setTrial(trial);
+        user = appUserRepository.save(user);
+        log.info("[AppUserService] Google login userId={} trial={}", user.getId(), user.isTrial());
+        return authResponse(user);
+    }
+
+    private AuthResponse authResponse(AppUser user) {
+        String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name(), user.isTrial());
+        return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(),
+                user.getRole().name(), user.isTrial());
     }
 
     @Transactional(readOnly = true)

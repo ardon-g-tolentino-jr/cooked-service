@@ -5,6 +5,7 @@ public record AuthResponse(
         Long userId,
         String email,
         String displayName,
-        String role
+        String role,
+        boolean trial
 ) {
 }

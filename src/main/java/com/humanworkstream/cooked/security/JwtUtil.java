@@ -24,11 +24,12 @@ public class JwtUtil {
         this.expirationMs = expirationMs;
     }
 
-    public String generate(String email, long userId, String role) {
+    public String generate(String email, long userId, String role, boolean trial) {
         return Jwts.builder()
                 .subject(email)
                 .claim("userId", userId)
                 .claim("role", role)
+                .claim("trial", trial)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + expirationMs))
                 .signWith(key)

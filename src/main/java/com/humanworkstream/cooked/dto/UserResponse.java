@@ -9,9 +9,11 @@ public record UserResponse(
         String email,
         String displayName,
         String handle,
+        boolean trial,
         OffsetDateTime createdAt
 ) {
     public static UserResponse from(AppUser u) {
-        return new UserResponse(u.getId(), u.getEmail(), u.getDisplayName(), u.getHandle(), u.getCreatedAt());
+        return new UserResponse(u.getId(), u.getEmail(), u.getDisplayName(), u.getHandle(),
+                u.isTrial(), u.getCreatedAt());
     }
 }
