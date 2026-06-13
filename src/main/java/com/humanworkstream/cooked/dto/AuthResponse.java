@@ -6,6 +6,7 @@ public record AuthResponse(
         String email,
         String displayName,
         String role,
-        boolean trial
+        boolean trial,
+        boolean mustChangePassword
 ) {
 }

@@ -40,6 +40,10 @@ public class AppUser {
     @Column(name = "is_trial", nullable = false)
     private boolean trial = false;
 
+    // True after a password reset until the user chooses a new password → forces a change.
+    @Column(name = "password_temporary", nullable = false)
+    private boolean passwordTemporary = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
