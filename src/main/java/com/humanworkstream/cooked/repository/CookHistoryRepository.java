@@ -8,4 +8,6 @@ import java.util.List;
 public interface CookHistoryRepository extends JpaRepository<CookHistory, Long> {
 
     List<CookHistory> findByUserIdOrderByCookedAtDesc(Long userId);
+
+    boolean existsByUserIdAndRecipeId(Long userId, Long recipeId);
 }

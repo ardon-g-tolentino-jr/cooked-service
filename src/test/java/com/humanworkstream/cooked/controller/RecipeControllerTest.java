@@ -52,7 +52,7 @@ class RecipeControllerTest {
         return new RecipeDetailResponse(id, "Chicken Adobo", 1L, null,
                 "Filipino", 15, 4, false, false,
                 List.of("comfort"), Collections.emptyList(), Collections.emptyList(),
-                OffsetDateTime.now());
+                OffsetDateTime.now(), null, 0L, null);
     }
 
     @Test
