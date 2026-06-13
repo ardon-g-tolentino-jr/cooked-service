@@ -5,8 +5,10 @@ import com.humanworkstream.cooked.dto.LoginRequest;
 import com.humanworkstream.cooked.dto.RegisterRequest;
 import com.humanworkstream.cooked.dto.UserPatchRequest;
 import com.humanworkstream.cooked.dto.UserResponse;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
 import com.humanworkstream.cooked.entity.AppUser;
 import com.humanworkstream.cooked.repository.AppUserRepository;
+import com.humanworkstream.cooked.security.GoogleTokenVerifier;
 import com.humanworkstream.cooked.security.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +27,7 @@ public class AppUserService {
     private final JwtUtil jwtUtil;
     private final PasswordEncoder passwordEncoder;
     private final SubscriptionGateService subscriptionGate;
+    private final GoogleTokenVerifier googleTokenVerifier;
 
     @Transactional
     public AuthResponse register(RegisterRequest req) {
@@ -54,6 +57,41 @@ public class AppUserService {
         // Gate: only users with active Cooked access (redeemed code or subscription) may sign in.
         subscriptionGate.assertActiveAccess(user.getEmail());
         log.info("[AppUserService] Login userId={}", user.getId());
+        String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name());
+        return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(), user.getRole().name());
+    }
+
+    /**
+     * Sign in with a Google ID token. Verifies the token, enforces the same Cooked access
+     * gate as password login, then finds-or-creates the local user (matched by email; SSO
+     * accounts have no local password).
+     */
+    @Transactional
+    public AuthResponse loginWithGoogle(String idToken) {
+        GoogleIdToken.Payload payload;
+        try {
+            payload = googleTokenVerifier.verify(idToken);
+        } catch (SecurityException e) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid Google sign-in");
+        }
+        String email = payload.getEmail();
+        if (email == null || email.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Google account has no email");
+        }
+        String name = payload.get("name") != null ? String.valueOf(payload.get("name")) : email;
+
+        // Gate: only emails with active Cooked access may sign in (same rule as password login).
+        // Checked before creating the local user so blocked accounts leave no orphan row.
+        subscriptionGate.assertActiveAccess(email);
+
+        AppUser user = appUserRepository.findOneByEmail(email).orElseGet(() -> {
+            AppUser u = new AppUser();
+            u.setEmail(email);
+            u.setDisplayName(name);
+            // SSO account — password_hash stays null
+            return appUserRepository.save(u);
+        });
+        log.info("[AppUserService] Google login userId={}", user.getId());
         String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name());
         return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(), user.getRole().name());
     }

@@ -78,4 +78,24 @@ class AuthControllerTest {
                         .content("{\"email\":\"not-an-email\",\"password\":\"\"}"))
                 .andExpect(status().isBadRequest());
     }
+
+    @Test
+    void google_validRequest_returns200WithToken() throws Exception {
+        when(appUserService.loginWithGoogle(any(String.class))).thenReturn(stubAuth());
+
+        mockMvc.perform(post("/auth/google")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"idToken\":\"a-google-id-token\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.token").value("jwt-token"))
+                .andExpect(jsonPath("$.email").value("chef@example.com"));
+    }
+
+    @Test
+    void google_invalidBody_returns400() throws Exception {
+        mockMvc.perform(post("/auth/google")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"idToken\":\"\"}"))
+                .andExpect(status().isBadRequest());
+    }
 }

@@ -1,6 +1,7 @@
 package com.humanworkstream.cooked.controller;
 
 import com.humanworkstream.cooked.dto.AuthResponse;
+import com.humanworkstream.cooked.dto.GoogleLoginRequest;
 import com.humanworkstream.cooked.dto.LoginRequest;
 import com.humanworkstream.cooked.dto.RegisterRequest;
 import com.humanworkstream.cooked.service.AppUserService;
@@ -28,5 +29,10 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest req) {
         return ResponseEntity.ok(appUserService.login(req));
+    }
+
+    @PostMapping("/google")
+    public ResponseEntity<AuthResponse> google(@Valid @RequestBody GoogleLoginRequest req) {
+        return ResponseEntity.ok(appUserService.loginWithGoogle(req.idToken()));
     }
 }
