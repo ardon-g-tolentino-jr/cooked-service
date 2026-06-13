@@ -44,7 +44,7 @@ class AuthControllerTest {
         mockMvc.perform(post("/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new RegisterRequest("Demo Chef", "chef@example.com", "Password123!"))))
+                                new RegisterRequest("Demo Chef", "chef@example.com", "Password123!", "HW-TEST-CODE-0001"))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.token").value("jwt-token"))
                 .andExpect(jsonPath("$.userId").value(1));

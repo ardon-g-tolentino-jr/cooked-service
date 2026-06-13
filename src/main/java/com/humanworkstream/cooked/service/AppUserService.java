@@ -24,12 +24,16 @@ public class AppUserService {
     private final AppUserRepository appUserRepository;
     private final JwtUtil jwtUtil;
     private final PasswordEncoder passwordEncoder;
+    private final SubscriptionGateService subscriptionGate;
 
     @Transactional
     public AuthResponse register(RegisterRequest req) {
         if (appUserRepository.existsByEmail(req.email())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already registered");
         }
+        // Gate: validate + redeem the registration code on the subscription service before
+        // creating the local account. Throws (aborting signup) if the code is missing/invalid.
+        subscriptionGate.provisionViaCode(req.displayName(), req.email(), req.password(), req.registrationCode());
         AppUser user = new AppUser();
         user.setEmail(req.email());
         user.setDisplayName(req.displayName());
@@ -47,6 +51,8 @@ public class AppUserService {
         if (!passwordEncoder.matches(req.password(), user.getPasswordHash())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
         }
+        // Gate: only users with active Cooked access (redeemed code or subscription) may sign in.
+        subscriptionGate.assertActiveAccess(user.getEmail());
         log.info("[AppUserService] Login userId={}", user.getId());
         String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name());
         return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(), user.getRole().name());
