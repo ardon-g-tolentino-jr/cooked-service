@@ -37,6 +37,8 @@ build/
 
 ### Secrets ###
 .env
+.env.*
+!.env.example
 
 ### Knowledge graph ###
 graphify-out/
