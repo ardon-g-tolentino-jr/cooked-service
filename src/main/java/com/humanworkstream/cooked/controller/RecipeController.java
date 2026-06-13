@@ -9,6 +9,7 @@ import com.humanworkstream.cooked.dto.RecipeInstructionResponse;
 import com.humanworkstream.cooked.dto.RecipeMoodsRequest;
 import com.humanworkstream.cooked.dto.RecipePatchRequest;
 import com.humanworkstream.cooked.dto.RecipeSummaryResponse;
+import com.humanworkstream.cooked.dto.RatingRequest;
 import com.humanworkstream.cooked.security.SecurityUtils;
 import com.humanworkstream.cooked.service.RecipeService;
 import jakarta.validation.Valid;
@@ -85,5 +86,11 @@ public class RecipeController {
     public ResponseEntity<List<RecipeInstructionResponse>> putInstructions(
             @PathVariable Long id, @RequestBody List<RecipeInstructionRequest> req) {
         return ResponseEntity.ok(recipeService.putInstructions(id, securityUtils.getCurrentUserId(), req));
+    }
+
+    @PutMapping("/{id}/rating")
+    public ResponseEntity<RecipeDetailResponse> rate(
+            @PathVariable Long id, @Valid @RequestBody RatingRequest req) {
+        return ResponseEntity.ok(recipeService.rate(securityUtils.getCurrentUserId(), id, req.stars()));
     }
 }

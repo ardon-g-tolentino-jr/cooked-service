@@ -14,6 +14,7 @@ import com.humanworkstream.cooked.entity.Recipe;
 import com.humanworkstream.cooked.entity.RecipeIngredient;
 import com.humanworkstream.cooked.entity.RecipeInstruction;
 import com.humanworkstream.cooked.entity.RecipeMood;
+import com.humanworkstream.cooked.entity.RecipeRating;
 import com.humanworkstream.cooked.entity.id.RecipeIngredientId;
 import com.humanworkstream.cooked.entity.id.RecipeInstructionId;
 import com.humanworkstream.cooked.entity.id.RecipeMoodId;
@@ -22,7 +23,9 @@ import com.humanworkstream.cooked.repository.IngredientRepository;
 import com.humanworkstream.cooked.repository.RecipeIngredientRepository;
 import com.humanworkstream.cooked.repository.RecipeInstructionRepository;
 import com.humanworkstream.cooked.repository.RecipeMoodRepository;
+import com.humanworkstream.cooked.repository.RecipeRatingRepository;
 import com.humanworkstream.cooked.repository.RecipeRepository;
+import com.humanworkstream.cooked.repository.CookHistoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -47,6 +50,8 @@ public class RecipeService {
     private final IngredientRepository ingredientRepository;
     private final CuisineRepository cuisineRepository;
     private final TrialLimitService trialLimits;
+    private final RecipeRatingRepository recipeRatingRepository;
+    private final CookHistoryRepository cookHistoryRepository;
 
     @Transactional(readOnly = true)
     public List<RecipeSummaryResponse> listVisible(Long userId) {
@@ -65,7 +70,7 @@ public class RecipeService {
     @Transactional(readOnly = true)
     public RecipeDetailResponse getDetail(Long recipeId, Long userId) {
         Recipe r = findVisible(recipeId, userId);
-        return buildDetail(r);
+        return buildDetail(r, userId);
     }
 
     @Transactional
@@ -86,7 +91,7 @@ public class RecipeService {
         saveIngredients(recipeId, req.ingredients());
         saveInstructions(recipeId, req.instructions());
         log.info("[RecipeService] Created recipeId={} userId={}", recipeId, userId);
-        return buildDetail(r);
+        return buildDetail(r, userId);
     }
 
     @Transactional
@@ -97,7 +102,7 @@ public class RecipeService {
         if (req.prepTimeMin() != null) r.setPrepTimeMin(req.prepTimeMin());
         if (req.servings() != null) r.setServings(req.servings());
         if (req.isShared() != null) r.setIsShared(req.isShared());
-        return buildDetail(recipeRepository.save(r));
+        return buildDetail(recipeRepository.save(r), userId);
     }
 
     @Transactional
@@ -211,8 +216,36 @@ public class RecipeService {
                 .toList();
     }
 
-    private RecipeDetailResponse buildDetail(Recipe r) {
+    private RecipeDetailResponse buildDetail(Recipe r, Long userId) {
+        Double avg = recipeRatingRepository.avgByRecipeId(r.getId());
+        long count = recipeRatingRepository.countByRecipeId(r.getId());
+        Integer mine = recipeRatingRepository.findByRecipeIdAndUserId(r.getId(), userId)
+                .map(rr -> rr.getStars().intValue()).orElse(null);
         return RecipeDetailResponse.from(r, moodsFor(r.getId()),
-                ingredientsFor(r.getId()), instructionsFor(r.getId()));
+                ingredientsFor(r.getId()), instructionsFor(r.getId()), avg, count, mine);
+    }
+
+    /** Rate a community recipe (1–5). Only allowed after the user has cooked it at least once. */
+    @Transactional
+    public RecipeDetailResponse rate(Long userId, Long recipeId, int stars) {
+        Recipe r = recipeRepository.findById(recipeId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Recipe not found"));
+        if (!Boolean.TRUE.equals(r.getIsCommunity())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only community recipes can be rated");
+        }
+        if (!cookHistoryRepository.existsByUserIdAndRecipeId(userId, recipeId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Cook this recipe at least once before rating it");
+        }
+        RecipeRating rr = recipeRatingRepository.findByRecipeIdAndUserId(recipeId, userId)
+                .orElseGet(() -> {
+                    RecipeRating n = new RecipeRating();
+                    n.setRecipeId(recipeId);
+                    n.setUserId(userId);
+                    return n;
+                });
+        rr.setStars((short) stars);
+        recipeRatingRepository.save(rr);
+        log.info("[RecipeService] user={} rated recipe={} stars={}", userId, recipeId, stars);
+        return buildDetail(r, userId);
     }
 }
