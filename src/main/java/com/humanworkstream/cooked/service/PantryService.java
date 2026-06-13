@@ -27,6 +27,7 @@ public class PantryService {
 
     private final PantryItemRepository pantryItemRepository;
     private final IngredientRepository ingredientRepository;
+    private final TrialLimitService trialLimits;
 
     @Transactional(readOnly = true)
     public List<PantryItemResponse> list(Long userId) {
@@ -38,6 +39,9 @@ public class PantryService {
 
     @Transactional
     public PantryItemResponse add(Long userId, PantryItemCreateRequest req) {
+        // TRIAL tier: gate pantry access and cap the number of pantry items.
+        trialLimits.assertEnabled(TrialLimitService.PANTRY);
+        trialLimits.assertUnderLimit(TrialLimitService.PANTRY, pantryItemRepository.countByUserId(userId));
         Ingredient ing = ingredientRepository.findById(req.ingredientId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown ingredient"));
         if (req.unit() == UnitType.PCS && ing.getGramsPerPiece() == null) {

@@ -25,9 +25,11 @@ public class MealPlanService {
 
     private final MealPlanRepository mealPlanRepository;
     private final RecipeRepository recipeRepository;
+    private final TrialLimitService trialLimits;
 
     @Transactional(readOnly = true)
     public List<MealPlanEntryResponse> list(Long userId, LocalDate from, LocalDate to) {
+        trialLimits.assertEnabled(TrialLimitService.MEAL_PLAN);
         List<MealPlanEntry> entries = mealPlanRepository
                 .findByUserIdAndPlanDateBetweenOrderByPlanDateAscCreatedAtAsc(userId, from, to);
         Map<Long, String> names = recipeRepository
@@ -40,6 +42,7 @@ public class MealPlanService {
 
     @Transactional
     public MealPlanEntryResponse add(Long userId, MealPlanAddRequest req) {
+        trialLimits.assertEnabled(TrialLimitService.MEAL_PLAN);
         Recipe recipe = recipeRepository.findById(req.recipeId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown recipe"));
         MealPlanEntry entry = mealPlanRepository
@@ -53,6 +56,7 @@ public class MealPlanService {
 
     @Transactional
     public void delete(Long userId, Long id) {
+        trialLimits.assertEnabled(TrialLimitService.MEAL_PLAN);
         MealPlanEntry entry = mealPlanRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meal plan entry not found"));
         if (!userId.equals(entry.getUserId())) {

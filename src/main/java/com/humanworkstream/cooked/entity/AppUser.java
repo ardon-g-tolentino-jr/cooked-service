@@ -36,6 +36,10 @@ public class AppUser {
     @Column(name = "role", nullable = false)
     private com.humanworkstream.cooked.enumeration.UserRole role = com.humanworkstream.cooked.enumeration.UserRole.USER;
 
+    // True when the user signed up with a TRIAL registration code → access limits apply
+    @Column(name = "is_trial", nullable = false)
+    private boolean trial = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 

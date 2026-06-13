@@ -14,4 +14,6 @@ public interface RecipeRepository extends JpaRepository<Recipe, Long> {
     List<Recipe> findVisibleToUser(@Param("userId") Long userId);
 
     List<Recipe> findByOwnerUserIdOrderByNameAsc(Long ownerUserId);
+
+    long countByOwnerUserId(Long ownerUserId);
 }

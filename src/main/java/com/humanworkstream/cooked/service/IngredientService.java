@@ -31,6 +31,7 @@ public class IngredientService {
     private final IngredientRepository ingredientRepository;
     private final UserIngredientEditRepository editRepository;
     private final AppUserRepository appUserRepository;
+    private final TrialLimitService trialLimits;
 
     @Transactional(readOnly = true)
     public List<IngredientResponse> listForUser(Long userId) {
@@ -52,6 +53,8 @@ public class IngredientService {
 
     @Transactional
     public IngredientResponse create(Long userId, boolean isAdmin, IngredientCreateRequest req) {
+        // TRIAL tier: trial users can't add custom ingredients when the component is disabled.
+        if (!isAdmin) trialLimits.assertEnabled(TrialLimitService.INGREDIENTS);
         if (ingredientRepository.existsByNameIgnoreCase(req.name())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Ingredient name already exists");
         }
