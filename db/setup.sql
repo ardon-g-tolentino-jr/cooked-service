@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS cooked.app_user (
   display_name  TEXT NOT NULL,
   handle        TEXT UNIQUE,                      -- community handle, e.g. @priya.kitchen
   password_hash TEXT,                             -- BCrypt; NULL only for legacy/seed display users
+  role          TEXT NOT NULL DEFAULT 'USER' CHECK (role IN ('USER', 'ADMIN')),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

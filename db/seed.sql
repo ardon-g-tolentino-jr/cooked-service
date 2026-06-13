@@ -19,9 +19,9 @@ ON CONFLICT DO NOTHING;
 
 -- ── Demo user (password: Password123!) ─────────
 
-INSERT INTO app_user (id, email, display_name, handle, password_hash)
+INSERT INTO app_user (id, email, display_name, handle, password_hash, role)
 VALUES (1, 'chef@example.com', 'Demo Chef', 'demochef',
-        '$2a$10$MaYxR0ZQ3xbZVIkkL2K1B.WG8sW1aRh8QFvWaOQDo96DBgR5HdGwe')
+        '$2a$10$MaYxR0ZQ3xbZVIkkL2K1B.WG8sW1aRh8QFvWaOQDo96DBgR5HdGwe', 'ADMIN')
 ON CONFLICT (email) DO NOTHING;
 
 -- ── Builtin ingredients ─────────────────────────

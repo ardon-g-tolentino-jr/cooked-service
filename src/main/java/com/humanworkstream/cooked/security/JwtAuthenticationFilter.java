@@ -31,9 +31,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 Claims claims = jwtUtil.parse(token);
                 // jjwt serialises Long as Integer when value fits; use Number to be safe
                 long userId = ((Number) claims.get("userId")).longValue();
-                UserPrincipal principal = new UserPrincipal(claims.getSubject(), userId);
+                String role = claims.get("role", String.class);
+                if (role == null) role = "USER";
+                UserPrincipal principal = new UserPrincipal(claims.getSubject(), userId, role);
                 var auth = new UsernamePasswordAuthenticationToken(
-                        principal, null, Collections.emptyList());
+                        principal, null,
+                        java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_" + role)));
                 SecurityContextHolder.getContext().setAuthentication(auth);
             }
         }

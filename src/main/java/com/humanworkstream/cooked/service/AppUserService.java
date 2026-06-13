@@ -36,8 +36,8 @@ public class AppUserService {
         user.setPasswordHash(passwordEncoder.encode(req.password()));
         user = appUserRepository.save(user);
         log.info("[AppUserService] Registered userId={}", user.getId());
-        String token = jwtUtil.generate(user.getEmail(), user.getId());
-        return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName());
+        String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name());
+        return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(), user.getRole().name());
     }
 
     @Transactional(readOnly = true)
@@ -48,8 +48,8 @@ public class AppUserService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
         }
         log.info("[AppUserService] Login userId={}", user.getId());
-        String token = jwtUtil.generate(user.getEmail(), user.getId());
-        return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName());
+        String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name());
+        return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(), user.getRole().name());
     }
 
     @Transactional(readOnly = true)
