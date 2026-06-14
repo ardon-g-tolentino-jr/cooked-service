@@ -41,7 +41,16 @@ public class AppUserService {
         String temp = PasswordGenerator.generate(12);
         // Gate: validate + redeem the registration code on the subscription service before
         // creating the local account. Throws (aborting signup) if the code is missing/invalid.
-        subscriptionGate.provisionViaCode(req.displayName(), req.email(), temp, req.registrationCode());
+        //
+        // Reconcile a partial prior signup: provisioning is a remote call made before the local
+        // user is persisted, so an attempt that fails after provisioning leaves active access on
+        // the subscription side with no local user — permanently blocking re-registration. If the
+        // email already has active access, skip redemption and just create the local account.
+        if (subscriptionGate.hasActiveAccess(req.email())) {
+            log.info("[AppUserService] {} already has active Cooked access — skipping code redemption", req.email());
+        } else {
+            subscriptionGate.provisionViaCode(req.displayName(), req.email(), temp, req.registrationCode());
+        }
         AppUser user = new AppUser();
         user.setEmail(req.email());
         user.setDisplayName(req.displayName());
@@ -51,11 +60,7 @@ public class AppUserService {
         user.setTrial(req.registrationCode() != null && req.registrationCode().toUpperCase().contains("TRIAL"));
         user = appUserRepository.save(user);
         log.info("[AppUserService] Registered userId={} trial={} (temp password issued)", user.getId(), user.isTrial());
-        emailService.send(user.getEmail(), "Welcome to Cooked — your temporary password",
-                "Hi " + user.getDisplayName() + ",\n\n" +
-                "Your Cooked account is ready. Sign in with this temporary password:\n\n" +
-                "    " + temp + "\n\n" +
-                "You'll be asked to set a new password right after signing in.\n\n— Cooked");
+        emailService.sendWelcomeEmail(user.getEmail(), user.getDisplayName(), temp);
     }
 
     @Transactional
@@ -122,12 +127,7 @@ public class AppUserService {
             user.setPasswordTemporary(true);
             appUserRepository.save(user);
             log.info("[AppUserService] issued temp password for userId={}", user.getId());
-            emailService.send(user.getEmail(), "Your Cooked temporary password",
-                    "Hi " + user.getDisplayName() + ",\n\n" +
-                    "We received a request to reset your Cooked password. Sign in with this temporary password:\n\n" +
-                    "    " + temp + "\n\n" +
-                    "You'll be asked to set a new password right after signing in.\n\n" +
-                    "If you didn't request this, you can ignore this email.\n\n— Cooked");
+            emailService.sendPasswordResetEmail(user.getEmail(), user.getDisplayName(), temp);
         });
         // Always return normally — never reveal whether the email is registered.
     }

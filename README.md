@@ -95,6 +95,12 @@ SUBSCRIPTION_GATE_ENABLED=true        # set false to bypass the gate entirely in
 | `SUBSCRIPTION_SERVICE_CODE` | — | `COOKED` | Service code filtered for access |
 | `SUBSCRIPTION_GATE_ENABLED` | — | `true` | `false` disables the access gate |
 | `GOOGLE_CLIENT_ID` | — | shared subscription client | OAuth client the Google ID token is verified against |
+| `MAIL_USERNAME` | ✅ in prod (secret) | _(empty)_ | SMTP/Gmail account used to send the welcome + password-reset emails. **Blank → emails are not sent**; the temp password is logged instead |
+| `MAIL_PASSWORD` | ✅ in prod (secret) | _(empty)_ | SMTP/Gmail **app password** for `MAIL_USERNAME` |
+| `MAIL_HOST` / `MAIL_PORT` | — | `smtp.gmail.com` / `587` | SMTP server (STARTTLS) |
+| `MAIL_FROM` | — | `Cooked <humanworkstream@gmail.com>` | `From` header on outgoing mail |
+| `MAIL_ENABLED` | — | `true` | `false` logs the temp password instead of sending |
+| `APP_UI_BASE_URL` | — | `https://cooked.humanworkstream.com` | Public UI URL used for the "Sign in" button in emails |
 | `JPA_SHOW_SQL` / `JPA_FORMAT_SQL` | — | `false` | SQL logging |
 
 ---

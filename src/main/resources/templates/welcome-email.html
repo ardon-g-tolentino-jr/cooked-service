@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Welcome to Cooked</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          background-color: #f6f8fb;
+          font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          color: #0f172a;
+          -webkit-font-smoothing: antialiased;
+        }
+        .wrapper { max-width: 620px; margin: 40px auto; padding: 0 16px 40px; }
+
+        .header {
+          background-color: #FF6B35;
+          border-radius: 14px 14px 0 0;
+          padding: 36px 40px 28px;
+          position: relative;
+        }
+        .header-eyebrow {
+          font-size: 11px; font-weight: 500; letter-spacing: 0.12em;
+          text-transform: uppercase; color: #fff3ee; margin-bottom: 10px; opacity: 0.9;
+        }
+        .header-title { font-size: 26px; font-weight: 700; color: #ffffff; line-height: 1.25; margin-bottom: 6px; }
+        .header-sub { font-size: 14px; color: #fff3ee; font-weight: 400; opacity: 0.85; }
+
+        .body { background-color: #ffffff; padding: 32px 40px; }
+        .greeting { font-size: 21px; font-weight: 600; color: #0f172a; margin-bottom: 14px; }
+        .body-text { font-size: 14px; color: #334155; line-height: 1.75; margin-bottom: 20px; }
+
+        .credentials-box {
+          background-color: #fff3ee; border-radius: 10px;
+          border-left: 3px solid #FF6B35; padding: 18px 20px; margin: 20px 0;
+        }
+        .cred-label {
+          font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
+          text-transform: uppercase; color: #64748b; margin-bottom: 4px;
+        }
+        .cred-value { font-size: 14px; font-weight: 500; color: #0f172a; margin-bottom: 14px; }
+        .cred-value.last { margin-bottom: 0; }
+        .cred-mono {
+          font-family: 'Courier New', Courier, monospace;
+          background-color: #ffffff; border: 1px solid #f1d9cd;
+          border-radius: 6px; padding: 6px 12px;
+          font-size: 16px; font-weight: 700; letter-spacing: 0.08em; display: inline-block; color: #FF6B35;
+        }
+        .cred-note { font-size: 12px; color: #64748b; margin-top: 12px; line-height: 1.5; }
+
+        .divider { border: none; border-top: 1px solid #e5e9f0; margin: 24px 0; }
+
+        .section-heading {
+          font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
+          text-transform: uppercase; color: #64748b; margin-bottom: 14px;
+        }
+
+        .feature-table { width: 100%; border-collapse: separate; border-spacing: 10px; margin: 0 -10px 20px; }
+        .feature-cell {
+          background-color: #f8fafc; border: 1px solid #e5e9f0;
+          border-radius: 10px; padding: 14px 16px; vertical-align: top; width: 50%;
+        }
+        .feature-name { font-size: 13px; font-weight: 600; color: #0f172a; margin-bottom: 3px; }
+        .feature-desc { font-size: 12px; color: #64748b; line-height: 1.4; }
+        .feature-icon { font-size: 18px; margin-bottom: 6px; }
+
+        .cta-wrap { text-align: center; margin: 24px 0; }
+        .cta-btn {
+          display: inline-block; background-color: #FF6B35; color: #ffffff !important;
+          text-decoration: none; border-radius: 8px; padding: 13px 32px;
+          font-size: 14px; font-weight: 600; letter-spacing: 0.01em;
+        }
+
+        .disclaimer { font-size: 12px; color: #64748b; line-height: 1.6; margin-top: 20px; }
+        .disclaimer a { color: #FF6B35; text-decoration: none; }
+
+        .footer {
+          background-color: #f8fafc; border-radius: 0 0 14px 14px;
+          padding: 20px 40px; border-top: 1px solid #e5e9f0;
+        }
+        .footer-inner { display: table; width: 100%; }
+        .footer-brand { display: table-cell; vertical-align: middle; }
+        .footer-dot {
+          display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+          background-color: #FF6B35; margin-right: 6px; vertical-align: middle;
+        }
+        .footer-brand-name { font-size: 13px; font-weight: 600; color: #334155; vertical-align: middle; }
+        .footer-links { display: table-cell; vertical-align: middle; text-align: right; }
+        .footer-links a { font-size: 12px; color: #64748b; text-decoration: none; margin-left: 16px; }
+    </style>
+</head>
+<body>
+<div class="wrapper">
+
+    <div class="header">
+        <div style="text-align: right; margin-bottom: 12px;">
+    <span style="display: inline-block; background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.35); border-radius: 999px; padding: 4px 12px; font-size: 11px; color: #ffffff; font-weight: 500; letter-spacing: 0.04em;">
+      &#10003; Account created
+    </span>
+        </div>
+        <p class="header-eyebrow">Cooked &middot; Pantry-first cooking</p>
+        <h1 class="header-title">Welcome to Cooked.</h1>
+        <p class="header-sub">Your kitchen is ready to go.</p>
+    </div>
+
+    <div class="body">
+
+        <p class="greeting" th:text="'Hi ' + ${name} + ','">Hi there,</p>
+
+        <p class="body-text">
+            Your Cooked account is ready &mdash; cook from what you already have, track your pantry,
+            and get recipe suggestions that use up what's about to expire. Sign in with the temporary
+            password below to get started.
+        </p>
+
+        <div class="credentials-box">
+            <p class="cred-label">Temporary password</p>
+            <p class="cred-value last">
+                <span class="cred-mono" th:text="${tmpPassword}">cZLgfgQrGTWx</span>
+            </p>
+            <p class="cred-note">&#9432;&nbsp; You'll be prompted to set your own password right after your first sign-in.</p>
+        </div>
+
+        <hr class="divider" />
+
+        <p class="section-heading">What you can do now</p>
+
+        <table class="feature-table" role="presentation">
+            <tr>
+                <td class="feature-cell">
+                    <div class="feature-icon">&#129380;</div>
+                    <p class="feature-name">Pantry</p>
+                    <p class="feature-desc">Track what you have and what's expiring</p>
+                </td>
+                <td class="feature-cell">
+                    <div class="feature-icon">&#128221;</div>
+                    <p class="feature-name">Recipes</p>
+                    <p class="feature-desc">Browse, save, and create your own</p>
+                </td>
+            </tr>
+            <tr>
+                <td class="feature-cell">
+                    <div class="feature-icon">&#10024;</div>
+                    <p class="feature-name">Suggestions</p>
+                    <p class="feature-desc">Cook from what you already have</p>
+                </td>
+                <td class="feature-cell">
+                    <div class="feature-icon">&#128722;</div>
+                    <p class="feature-name">Shopping list</p>
+                    <p class="feature-desc">Fill the gaps for your next cook</p>
+                </td>
+            </tr>
+        </table>
+
+        <div class="cta-wrap">
+            <a th:href="${loginUrl}" href="https://cooked.humanworkstream.com" class="cta-btn">
+                Sign in to Cooked &rarr;
+            </a>
+        </div>
+
+        <p class="disclaimer">
+            If you didn't create this account or believe this was sent in error,
+            please <a href="mailto:humanworkstream@gmail.com">contact our support team</a>.
+        </p>
+
+    </div>
+
+    <div class="footer">
+        <div class="footer-inner">
+            <div class="footer-brand">
+                <span class="footer-dot"></span>
+                <span class="footer-brand-name">Cooked &middot; humanworkstream.com</span>
+            </div>
+            <div class="footer-links">
+                <a href="#">Privacy</a>
+                <a href="#">Support</a>
+            </div>
+        </div>
+    </div>
+
+</div>
+</body>
+</html>

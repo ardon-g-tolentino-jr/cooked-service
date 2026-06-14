@@ -76,6 +76,14 @@ public class SubscriptionGateService {
                     .toBodilessEntity();
             log.info("[SubscriptionGate] redeemed code for {}", email);
         } catch (RestClientResponseException e) {
+            // Safety net for a partial prior signup: if the email already has active access,
+            // the subscription side answers 409 (DuplicateAccess) and does NOT consume the code.
+            // Treat that as success so registration is idempotent and can finish creating the
+            // local account that the earlier attempt failed to persist.
+            if (e.getStatusCode().value() == HttpStatus.CONFLICT.value()) {
+                log.info("[SubscriptionGate] {} already has active access — treating redemption as a no-op (idempotent)", email);
+                return;
+            }
             String msg = extractMessage(e, "Your registration code could not be redeemed.");
             log.warn("[SubscriptionGate] code redemption rejected for {}: {} {}", email, e.getStatusCode(), msg);
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, msg);
@@ -122,6 +130,31 @@ public class SubscriptionGateService {
                 .anyMatch(r -> r.regCode() != null && r.regCode().toUpperCase().contains("TRIAL"));
         if (trial) log.info("[SubscriptionGate] {} is on a TRIAL access code", email);
         return trial;
+    }
+
+    /**
+     * Non-throwing check: does this email already have active access for this service?
+     * Used at signup to reconcile a partial prior registration — if access already exists
+     * we skip code redemption and just create the local account. Any error (including the
+     * gate being disabled or the subscription service being unreachable) returns false so
+     * the caller falls back to normal code redemption, which has its own error handling.
+     */
+    public boolean hasActiveAccess(String email) {
+        if (!enabled) {
+            return false;
+        }
+        try {
+            List<AccessRecord> records = restClient.get()
+                    .uri(b -> b.path("/api/clients/access/by-email").queryParam("email", email).build())
+                    .header("X-Api-Key", apiKey)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<List<AccessRecord>>() {});
+            return records != null && records.stream()
+                    .anyMatch(r -> Boolean.TRUE.equals(r.isActive()) && serviceCode.equalsIgnoreCase(r.serviceCode()));
+        } catch (Exception e) {
+            log.warn("[SubscriptionGate] active-access pre-check failed for {} ({}) — will attempt code redemption", email, e.toString());
+            return false;
+        }
     }
 
     private ResponseStatusException noAccess() {
