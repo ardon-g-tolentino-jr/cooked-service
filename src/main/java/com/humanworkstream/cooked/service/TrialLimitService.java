@@ -30,6 +30,19 @@ public class TrialLimitService {
     private final TrialLimitRepository trialLimitRepository;
     private final SecurityUtils securityUtils;
 
+    /**
+     * Whether trial limits currently apply to the caller. True only for trial users whose
+     * full-access window has ended (now >= trialUntil). During the window — or when the
+     * window is unknown is treated conservatively as ended — see below. Non-trial users
+     * are never limited.
+     */
+    private boolean isLimitedTrial() {
+        if (!securityUtils.isTrial()) return false;
+        Long until = securityUtils.getTrialUntil();
+        // null (legacy token without the claim) → treat as limited, never grant endless full access
+        return until == null || System.currentTimeMillis() >= until;
+    }
+
     @Transactional(readOnly = true)
     public List<TrialLimit> getAll() {
         return trialLimitRepository.findAll();
@@ -47,7 +60,7 @@ public class TrialLimitService {
     /** Block a trial user from a component whose access is disabled. No-op for non-trial users. */
     @Transactional(readOnly = true)
     public void assertEnabled(String component) {
-        if (!securityUtils.isTrial()) return;
+        if (!isLimitedTrial()) return;
         trialLimitRepository.findById(component).ifPresent(limit -> {
             if (!limit.isAccessEnabled()) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN,
@@ -59,7 +72,7 @@ public class TrialLimitService {
     /** Block a trial user at/over the component's item cap. No-op for non-trial users or no cap. */
     @Transactional(readOnly = true)
     public void assertUnderLimit(String component, long currentCount) {
-        if (!securityUtils.isTrial()) return;
+        if (!isLimitedTrial()) return;
         trialLimitRepository.findById(component).ifPresent(limit -> {
             Integer max = limit.getMaxCount();
             if (max != null && currentCount >= max) {

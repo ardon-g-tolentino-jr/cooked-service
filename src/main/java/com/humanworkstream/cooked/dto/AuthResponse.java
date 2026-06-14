@@ -7,6 +7,8 @@ public record AuthResponse(
         String displayName,
         String role,
         boolean trial,
+        // ISO-8601 instant until which a trial user has full access (null if not trial)
+        String trialFullAccessUntil,
         boolean mustChangePassword
 ) {
 }

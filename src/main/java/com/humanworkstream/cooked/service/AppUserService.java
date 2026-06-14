@@ -13,11 +13,14 @@ import com.humanworkstream.cooked.security.JwtUtil;
 import com.humanworkstream.cooked.security.PasswordGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+
+import java.time.OffsetDateTime;
 
 @Slf4j
 @Service
@@ -30,6 +33,10 @@ public class AppUserService {
     private final SubscriptionGateService subscriptionGate;
     private final GoogleTokenVerifier googleTokenVerifier;
     private final EmailService emailService;
+
+    /** Length of a trial account's full-access window before trial limits apply. */
+    @Value("${cooked.trial.full-access-days}")
+    private long fullAccessDays;
 
     @Transactional
     public void register(RegisterRequest req) {
@@ -58,8 +65,10 @@ public class AppUserService {
         user.setPasswordTemporary(true);
         // TRIAL tier: the registration code itself names the trial.
         user.setTrial(req.registrationCode() != null && req.registrationCode().toUpperCase().contains("TRIAL"));
+        ensureTrialWindow(user);
         user = appUserRepository.save(user);
-        log.info("[AppUserService] Registered userId={} trial={} (temp password issued)", user.getId(), user.isTrial());
+        log.info("[AppUserService] Registered userId={} trial={} fullAccessUntil={} (temp password issued)",
+                user.getId(), user.isTrial(), user.getTrialFullAccessUntil());
         emailService.sendWelcomeEmail(user.getEmail(), user.getDisplayName(), temp);
     }
 
@@ -73,8 +82,10 @@ public class AppUserService {
         // Gate: only users with active Cooked access (redeemed code or subscription) may sign in.
         // Returns whether that access is a TRIAL code; refresh the stored flag each login.
         user.setTrial(subscriptionGate.assertActiveAccess(user.getEmail()));
+        ensureTrialWindow(user);
         appUserRepository.save(user);
-        log.info("[AppUserService] Login userId={} trial={}", user.getId(), user.isTrial());
+        log.info("[AppUserService] Login userId={} trial={} fullAccessUntil={}",
+                user.getId(), user.isTrial(), user.getTrialFullAccessUntil());
         return authResponse(user);
     }
 
@@ -109,8 +120,10 @@ public class AppUserService {
             return u;
         });
         user.setTrial(trial);
+        ensureTrialWindow(user);
         user = appUserRepository.save(user);
-        log.info("[AppUserService] Google login userId={} trial={}", user.getId(), user.isTrial());
+        log.info("[AppUserService] Google login userId={} trial={} fullAccessUntil={}",
+                user.getId(), user.isTrial(), user.getTrialFullAccessUntil());
         return authResponse(user);
     }
 
@@ -148,10 +161,26 @@ public class AppUserService {
         log.info("[AppUserService] changed password for userId={}", user.getId());
     }
 
+    /**
+     * Freeze the trial full-access window the first time a user is known to be a trial
+     * account. Anchored to created_at (≈ now for brand-new users) + the configured days,
+     * so a later config change doesn't move an existing user's window.
+     */
+    private void ensureTrialWindow(AppUser user) {
+        if (user.isTrial() && user.getTrialFullAccessUntil() == null) {
+            OffsetDateTime anchor = user.getCreatedAt() != null ? user.getCreatedAt() : OffsetDateTime.now();
+            user.setTrialFullAccessUntil(anchor.plusDays(fullAccessDays));
+        }
+    }
+
     private AuthResponse authResponse(AppUser user) {
-        String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name(), user.isTrial());
+        // Only carry the full-access window for trial accounts.
+        OffsetDateTime until = user.isTrial() ? user.getTrialFullAccessUntil() : null;
+        Long untilMs = until != null ? until.toInstant().toEpochMilli() : null;
+        String untilIso = until != null ? until.toString() : null;
+        String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name(), user.isTrial(), untilMs);
         return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(),
-                user.getRole().name(), user.isTrial(), user.isPasswordTemporary());
+                user.getRole().name(), user.isTrial(), untilIso, user.isPasswordTemporary());
     }
 
     @Transactional(readOnly = true)

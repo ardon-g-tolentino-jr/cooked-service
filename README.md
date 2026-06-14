@@ -52,7 +52,8 @@ psql -U postgres -d cooked -f db/japanese_recipes.sql
 Per-branch migrations live in `db/<branch-name>/NN_*.sql` — apply any that post-date your
 schema (e.g. `db/feat-ingredient-source/01_user_role.sql`,
 `db/feat-complete-api/01_add_password_hash.sql`, `db/feat-meal-planner/01_meal_plan.sql`,
-`db/feat-pantry-templates/01_pantry_template.sql`).
+`db/feat-pantry-templates/01_pantry_template.sql`,
+`db/feat-trial-full-access/01_trial_full_access.sql`).
 
 Seed login user: **`chef@example.com` / `Password123!`** (flagged `ADMIN` in dev).
 > With the access gate ON (default), this user must have active `COOKED` access on the
@@ -95,6 +96,7 @@ SUBSCRIPTION_GATE_ENABLED=true        # set false to bypass the gate entirely in
 | `JWT_EXPIRATION_MS` | — | `86400000` | Token lifetime (24h) |
 | `SUBSCRIPTION_SERVICE_CODE` | — | `COOKED` | Service code filtered for access |
 | `SUBSCRIPTION_GATE_ENABLED` | — | `true` | `false` disables the access gate |
+| `COOKED_TRIAL_FULL_ACCESS_DAYS` | — | `14` | Days a trial account has full access before trial limits apply (frozen per user at registration) |
 | `GOOGLE_CLIENT_ID` | — | shared subscription client | OAuth client the Google ID token is verified against |
 | `MAIL_USERNAME` | ✅ in prod (secret) | _(empty)_ | SMTP/Gmail account used to send the welcome + password-reset emails. **Blank → emails are not sent**; the temp password is logged instead |
 | `MAIL_PASSWORD` | ✅ in prod (secret) | _(empty)_ | SMTP/Gmail **app password** for `MAIL_USERNAME` |

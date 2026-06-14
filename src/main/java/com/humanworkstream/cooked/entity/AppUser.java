@@ -40,6 +40,11 @@ public class AppUser {
     @Column(name = "is_trial", nullable = false)
     private boolean trial = false;
 
+    // For trial users: full (unlimited) access until this instant; after it the trial
+    // limits apply. Frozen per user at registration/first login (now + configured days).
+    @Column(name = "trial_full_access_until")
+    private OffsetDateTime trialFullAccessUntil;
+
     // True after a password reset until the user chooses a new password → forces a change.
     @Column(name = "password_temporary", nullable = false)
     private boolean passwordTemporary = false;

@@ -31,4 +31,13 @@ public class SecurityUtils {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return auth != null && auth.getPrincipal() instanceof UserPrincipal p && p.trial();
     }
+
+    /** Epoch millis until which a trial user has full access, or null if unknown/not trial. */
+    public Long getTrialUntil() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof UserPrincipal p) {
+            return p.trialUntil();
+        }
+        return null;
+    }
 }
