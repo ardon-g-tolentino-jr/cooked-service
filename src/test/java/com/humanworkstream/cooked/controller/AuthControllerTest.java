@@ -38,23 +38,21 @@ class AuthControllerTest {
     }
 
     @Test
-    void register_validRequest_returns201WithToken() throws Exception {
-        when(appUserService.register(any(RegisterRequest.class))).thenReturn(stubAuth());
-
+    void register_validRequest_returns201WithMessage() throws Exception {
+        // register is void: it emails a temporary password rather than returning a session.
         mockMvc.perform(post("/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
-                                new RegisterRequest("Demo Chef", "chef@example.com", "Password123!", "HW-TEST-CODE-0001"))))
+                                new RegisterRequest("Demo Chef", "chef@example.com", "HW-TEST-CODE-0001"))))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.token").value("jwt-token"))
-                .andExpect(jsonPath("$.userId").value(1));
+                .andExpect(jsonPath("$.message").exists());
     }
 
     @Test
     void register_invalidBody_returns400() throws Exception {
         mockMvc.perform(post("/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"displayName\":\"\",\"email\":\"not-an-email\",\"password\":\"short\"}"))
+                        .content("{\"displayName\":\"\",\"email\":\"not-an-email\"}"))
                 .andExpect(status().isBadRequest());
     }
 
