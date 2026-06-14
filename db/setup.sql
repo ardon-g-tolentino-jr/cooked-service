@@ -69,7 +69,9 @@ CREATE TABLE IF NOT EXISTS cooked.app_user (
   display_name  TEXT NOT NULL,
   handle        TEXT UNIQUE,                      -- community handle, e.g. @priya.kitchen
   password_hash TEXT,                             -- BCrypt; NULL only for legacy/seed display users
+  password_temporary BOOLEAN NOT NULL DEFAULT false, -- true while on a system-issued temp password (registration / forgot-password); forces a reset on next sign-in
   role          TEXT NOT NULL DEFAULT 'USER' CHECK (role IN ('USER', 'ADMIN')),
+  is_trial      BOOLEAN NOT NULL DEFAULT false,    -- TRIAL-tier access (set from the registration code)
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
