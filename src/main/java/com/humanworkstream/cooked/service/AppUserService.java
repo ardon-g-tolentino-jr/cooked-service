@@ -32,22 +32,30 @@ public class AppUserService {
     private final EmailService emailService;
 
     @Transactional
-    public AuthResponse register(RegisterRequest req) {
+    public void register(RegisterRequest req) {
         if (appUserRepository.existsByEmail(req.email())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already registered");
         }
+        // Registration does not take a user-chosen password: we generate a temporary one,
+        // store it (flagged temporary), and email it. The user sets their own on first sign-in.
+        String temp = PasswordGenerator.generate(12);
         // Gate: validate + redeem the registration code on the subscription service before
         // creating the local account. Throws (aborting signup) if the code is missing/invalid.
-        subscriptionGate.provisionViaCode(req.displayName(), req.email(), req.password(), req.registrationCode());
+        subscriptionGate.provisionViaCode(req.displayName(), req.email(), temp, req.registrationCode());
         AppUser user = new AppUser();
         user.setEmail(req.email());
         user.setDisplayName(req.displayName());
-        user.setPasswordHash(passwordEncoder.encode(req.password()));
+        user.setPasswordHash(passwordEncoder.encode(temp));
+        user.setPasswordTemporary(true);
         // TRIAL tier: the registration code itself names the trial.
         user.setTrial(req.registrationCode() != null && req.registrationCode().toUpperCase().contains("TRIAL"));
         user = appUserRepository.save(user);
-        log.info("[AppUserService] Registered userId={} trial={}", user.getId(), user.isTrial());
-        return authResponse(user);
+        log.info("[AppUserService] Registered userId={} trial={} (temp password issued)", user.getId(), user.isTrial());
+        emailService.send(user.getEmail(), "Welcome to Cooked — your temporary password",
+                "Hi " + user.getDisplayName() + ",\n\n" +
+                "Your Cooked account is ready. Sign in with this temporary password:\n\n" +
+                "    " + temp + "\n\n" +
+                "You'll be asked to set a new password right after signing in.\n\n— Cooked");
     }
 
     @Transactional

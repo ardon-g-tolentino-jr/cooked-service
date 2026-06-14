@@ -25,8 +25,11 @@ public class AuthController {
     private final AppUserService appUserService;
 
     @PostMapping("/register")
-    public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest req) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(appUserService.register(req));
+    public ResponseEntity<Map<String, String>> register(@Valid @RequestBody RegisterRequest req) {
+        appUserService.register(req);
+        // No session is returned: the user receives a temporary password by email and signs in with it.
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(Map.of("message", "Account created. A temporary password has been sent to your email."));
     }
 
     @PostMapping("/login")

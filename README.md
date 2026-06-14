@@ -117,7 +117,7 @@ API base: `http://localhost:8082`. Health: `GET /healthcheck`.
 
 | Endpoint | Auth | Purpose |
 |---|---|---|
-| `POST /auth/register` | public | Email+password signup. Requires a `registrationCode` redeemed on the subscription side. |
+| `POST /auth/register` | public | Passwordless signup (`{ displayName, email, registrationCode }`). Issues a system-generated temporary password by email; returns `201 { message }`, not a session. Requires a `registrationCode` redeemed on the subscription side. |
 | `POST /auth/login` | public | Email+password login. Gated on active `COOKED` access. |
 | `POST /auth/google` | public | Google SSO — verifies the ID token, applies the same gate, find-or-creates the user. Body `{ idToken }`. |
 
