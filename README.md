@@ -51,7 +51,8 @@ psql -U postgres -d cooked -f db/japanese_recipes.sql
 
 Per-branch migrations live in `db/<branch-name>/NN_*.sql` — apply any that post-date your
 schema (e.g. `db/feat-ingredient-source/01_user_role.sql`,
-`db/feat-complete-api/01_add_password_hash.sql`, `db/feat-meal-planner/01_meal_plan.sql`).
+`db/feat-complete-api/01_add_password_hash.sql`, `db/feat-meal-planner/01_meal_plan.sql`,
+`db/feat-pantry-templates/01_pantry_template.sql`).
 
 Seed login user: **`chef@example.com` / `Password123!`** (flagged `ADMIN` in dev).
 > With the access gate ON (default), this user must have active `COOKED` access on the
