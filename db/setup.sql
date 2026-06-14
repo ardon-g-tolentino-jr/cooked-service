@@ -231,6 +231,35 @@ CREATE TABLE IF NOT EXISTS cooked.meal_plan (
 CREATE INDEX IF NOT EXISTS ix_meal_plan_user_date ON cooked.meal_plan(user_id, plan_date);
 CREATE INDEX IF NOT EXISTS ix_meal_plan_recipe    ON cooked.meal_plan(recipe_id);
 
+-- community recipe ratings (1 per user per recipe; service gates to cooked community recipes)
+CREATE TABLE IF NOT EXISTS cooked.recipe_rating (
+  recipe_id  BIGINT      NOT NULL REFERENCES cooked.recipe(id)   ON DELETE CASCADE,
+  user_id    BIGINT      NOT NULL REFERENCES cooked.app_user(id) ON DELETE CASCADE,
+  stars      SMALLINT    NOT NULL CHECK (stars BETWEEN 1 AND 5),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (recipe_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS ix_recipe_rating_recipe ON cooked.recipe_rating(recipe_id);
+
+-- TRIAL-tier limits: admin-configurable, one row per gated component
+-- (access_enabled=false blocks trial users; max_count caps held items, NULL = unlimited)
+CREATE TABLE IF NOT EXISTS cooked.trial_limit (
+  component      TEXT PRIMARY KEY,
+  access_enabled BOOLEAN     NOT NULL DEFAULT true,
+  max_count      INTEGER,
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- default trial limits for the defined components (config, not user data; idempotent)
+INSERT INTO cooked.trial_limit (component, access_enabled, max_count) VALUES
+  ('meal_plan',   false, NULL),
+  ('recipes',     true,  10),
+  ('pantry',      true,  NULL),
+  ('shopping',    true,  NULL),
+  ('history',     true,  NULL),
+  ('ingredients', true,  NULL)
+ON CONFLICT (component) DO NOTHING;
+
 -- ──────────────────────────────────────────────
 -- Permissions
 -- ──────────────────────────────────────────────
