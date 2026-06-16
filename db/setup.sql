@@ -6,17 +6,21 @@
 -- The cooked-ui repo no longer carries a setup.sql — all schema changes
 -- and migrations live in this repo under db/.
 --
--- Plain SQL only (no psql meta-commands) — runs in psql, DBeaver, IntelliJ,
--- or any other client. Create the database first (CREATE DATABASE cooked;),
--- then run this against it as a superuser:
+-- Plain SQL only (no psql meta-commands) — paste into any SQL console
+-- (pgAdmin, DBeaver, IntelliJ, the Coolify/hosting DB console) or run with
+-- psql. Create the database first (CREATE DATABASE cooked;), then run this
+-- against it as a superuser.
 --
---   psql -U postgres -d cooked -f db/setup.sql
+-- This is STEP 1 of the from-scratch deploy. The full order is:
+--   1. db/setup.sql            — schema, roles, types, tables, grants (this file)
+--   2. db/account_creation.sql — the admin user (humanworkstream@gmail.com)
+--   3. db/seed.sql             — application seed data (catalog + recipes)
+-- See docs/DEPLOYMENT.md for the complete guide.
 --
 -- Passwords are NEVER checked in. Roles are created with CHANGE_ME
 -- placeholder passwords — set the real ones immediately afterwards:
 --
---   ALTER ROLE cooked_user     PASSWORD '<app password>';
---   ALTER ROLE cooked_readonly PASSWORD '<readonly password>';
+--   ALTER ROLE cooked_user PASSWORD '<app password>';
 --
 -- (Existing roles are never altered or dropped by this script, so
 -- re-running it will not reset rotated passwords.)
@@ -31,20 +35,13 @@
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cooked_user') THEN
-    CREATE ROLE cooked_user LOGIN PASSWORD 'CHANGE_ME';
+    CREATE ROLE cooked_user LOGIN PASSWORD 'Password123!';
   END IF;
 END $$;
 
--- cooked_readonly: reporting / debugging user (SELECT only)
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cooked_readonly') THEN
-    CREATE ROLE cooked_readonly LOGIN PASSWORD 'CHANGE_ME';
-  END IF;
-END $$;
+
 
 GRANT CONNECT ON DATABASE cooked TO cooked_user;
-GRANT CONNECT ON DATABASE cooked TO cooked_readonly;
 
 -- ──────────────────────────────────────────────
 -- Schema & types
@@ -72,6 +69,7 @@ CREATE TABLE IF NOT EXISTS cooked.app_user (
   password_temporary BOOLEAN NOT NULL DEFAULT false, -- true while on a system-issued temp password (registration / forgot-password); forces a reset on next sign-in
   role          TEXT NOT NULL DEFAULT 'USER' CHECK (role IN ('USER', 'ADMIN')),
   is_trial      BOOLEAN NOT NULL DEFAULT false,    -- TRIAL-tier access (set from the registration code)
+  trial_full_access_until TIMESTAMPTZ,             -- trial accounts: full access until this instant, then trial limits apply (see db/feat-trial-full-access)
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -265,20 +263,16 @@ ON CONFLICT (component) DO NOTHING;
 -- ──────────────────────────────────────────────
 
 GRANT USAGE ON SCHEMA cooked TO cooked_user;
-GRANT USAGE ON SCHEMA cooked TO cooked_readonly;
+
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA cooked TO cooked_user;
 GRANT USAGE, SELECT                  ON ALL SEQUENCES IN SCHEMA cooked TO cooked_user;
 
-GRANT SELECT ON ALL TABLES IN SCHEMA cooked TO cooked_readonly;
 
 -- future tables created by the admin/migration user inherit the same grants
 ALTER DEFAULT PRIVILEGES IN SCHEMA cooked
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO cooked_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA cooked
   GRANT USAGE, SELECT ON SEQUENCES TO cooked_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA cooked
-  GRANT SELECT ON TABLES TO cooked_readonly;
 
-ALTER ROLE cooked_user     IN DATABASE cooked SET search_path = cooked, public;
-ALTER ROLE cooked_readonly IN DATABASE cooked SET search_path = cooked, public;
+ALTER ROLE cooked_user IN DATABASE cooked SET search_path = cooked, public;

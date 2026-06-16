@@ -112,7 +112,9 @@ Public (no-JWT) endpoints:
 
 Controller tests use `@WebMvcTest` with security auto-configuration excluded and services mocked via `@MockBean`. `JwtUtil` must be `@MockBean` in every controller test because `JwtAuthenticationFilter` (a component-scanned `Filter`) depends on it at context startup.
 
-Seed credentials (from `db/seed.sql`): `chef@example.com` / `Password123!`
+Admin credentials (from `db/account_creation.sql`): `humanworkstream@gmail.com` / `Password123!`
+
+A from-scratch DB deploy is three idempotent scripts in order — `db/setup.sql` (schema/roles/DDL), `db/account_creation.sql` (admin user), `db/seed.sql` (catalog + recipes). See `docs/DEPLOYMENT.md`.
 
 ## Working Style
 

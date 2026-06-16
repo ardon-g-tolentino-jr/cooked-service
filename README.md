@@ -25,11 +25,15 @@ export JAVA_HOME="/Users/ardontolentinojr./Library/Java/JavaVirtualMachines/corr
 
 ## 2. Database setup
 
-All SQL lives in `db/`. Create the database, then run the canonical schema as a superuser:
+All SQL lives in `db/`. A from-scratch deploy is **three idempotent scripts**, run in
+order against the `cooked` database — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the
+full step-by-step guide (incl. browser/DB-console instructions).
 
 ```bash
-createdb cooked                       # or: CREATE DATABASE cooked;
-psql -U postgres -d cooked -f db/setup.sql
+createdb cooked                                # or: CREATE DATABASE cooked;
+psql -U postgres -d cooked -f db/setup.sql            # 1. schema, roles, types, tables, grants
+psql -U postgres -d cooked -f db/account_creation.sql # 2. admin user (humanworkstream@gmail.com)
+psql -U postgres -d cooked -f db/seed.sql             # 3. catalog + sample/community recipes
 ```
 
 `setup.sql` is idempotent and creates the roles (`cooked_user`, `cooked_readonly`) with
@@ -40,13 +44,10 @@ ALTER ROLE cooked_user     PASSWORD '<app password>';      -- match CUSTOM_DB_PA
 ALTER ROLE cooked_readonly PASSWORD '<readonly password>';
 ```
 
-Seed catalog + sample data (order matters — ingredients before recipes):
+Optional bulk catalog (6,946 USDA ingredients), if you want the full ingredient database:
 
 ```bash
 psql -U postgres -d cooked -f db/seed_ingredients.sql
-psql -U postgres -d cooked -f db/seed.sql
-psql -U postgres -d cooked -f db/seed_catalog.sql        # curated community recipes
-psql -U postgres -d cooked -f db/japanese_recipes.sql
 ```
 
 Per-branch migrations live in `db/<branch-name>/NN_*.sql` — apply any that post-date your
@@ -55,8 +56,10 @@ schema (e.g. `db/feat-ingredient-source/01_user_role.sql`,
 `db/feat-pantry-templates/01_pantry_template.sql`,
 `db/feat-trial-full-access/01_trial_full_access.sql`).
 
-Seed login user: **`chef@example.com` / `Password123!`** (flagged `ADMIN` in dev).
-> With the access gate ON (default), this user must have active `COOKED` access on the
+Admin login: **`humanworkstream@gmail.com` / `Password123!`** (`ADMIN` — change the password
+after first sign-in). `seed.sql` also creates a display-only demo user (`demo@cooked.local`)
+with a starter pantry.
+> With the access gate ON (default), the login user must have active `COOKED` access on the
 > subscription side, **or** set `SUBSCRIPTION_GATE_ENABLED=false` for local dev (see §6).
 
 ---
