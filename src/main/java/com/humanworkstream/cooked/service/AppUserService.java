@@ -40,8 +40,11 @@ public class AppUserService {
 
     @Transactional
     public void register(RegisterRequest req) {
+        // Do not reveal whether an email is already registered (account enumeration). Silently
+        // no-op for an existing account; the controller returns the same generic 201 either way.
         if (appUserRepository.existsByEmail(req.email())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already registered");
+            log.info("[AppUserService] registration attempted for an already-registered email — silently ignored");
+            return;
         }
         // Registration does not take a user-chosen password: we generate a temporary one,
         // store it (flagged temporary), and email it. The user sets their own on first sign-in.

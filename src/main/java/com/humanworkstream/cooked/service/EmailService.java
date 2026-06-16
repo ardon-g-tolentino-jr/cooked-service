@@ -46,7 +46,7 @@ public class EmailService {
         ctx.setVariable("name", name);
         ctx.setVariable("tmpPassword", tmpPassword);
         ctx.setVariable("loginUrl", uiBaseUrl);
-        sendHtml(to, "Welcome to Cooked — your temporary password", "welcome-email", ctx, tmpPassword);
+        sendHtml(to, "Welcome to Cooked — your temporary password", "welcome-email", ctx);
     }
 
     /** Password-reset email with a single-use temporary password. */
@@ -55,13 +55,14 @@ public class EmailService {
         ctx.setVariable("name", name);
         ctx.setVariable("tmpPassword", tmpPassword);
         ctx.setVariable("loginUrl", uiBaseUrl);
-        sendHtml(to, "Your Cooked temporary password", "password-reset", ctx, tmpPassword);
+        sendHtml(to, "Your Cooked temporary password", "password-reset", ctx);
     }
 
-    private void sendHtml(String to, String subject, String template, Context ctx, String tmpPassword) {
+    private void sendHtml(String to, String subject, String template, Context ctx) {
         if (!enabled || username == null || username.isBlank()) {
-            log.warn("[EmailService] mail disabled/unconfigured — would have sent '{}' to {} (temp password: {})",
-                    subject, to, tmpPassword);
+            // Never log the temporary password — it is a live credential. If mail is disabled,
+            // deliver it through a real channel (re-enable mail) rather than the application log.
+            log.warn("[EmailService] mail disabled/unconfigured — skipped sending '{}' to {}", subject, to);
             return;
         }
         try {
