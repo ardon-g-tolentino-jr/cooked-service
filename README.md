@@ -58,10 +58,12 @@ schema (e.g. `db/feat-ingredient-source/01_user_role.sql`,
 `db/feat-tier-limits/01_tier_limits.sql`).
 
 > **Subscription tiers** (`feat-tier-limits`): `db/feat-tier-limits/01_tier_limits.sql` adds the
-> `tier` registry + `tier_limit` matrix and an `app_user.tier` column. Tier limits apply by the
-> user's subscription plan (resolved at login, carried in the JWT `tier` claim), independently of
-> the trial axis. Tier names must match the COOKED plan names seeded in **subscription-service**
-> (`db/seed.sql`, branch `feat-cooked-tier-plans`: Basic, Premium).
+> sparse `tier_limit` settings table (per `(tier, component)`; a missing row = allowed) and an
+> `app_user.tier` column. The **tier list is owned by subscription-service** — a tier is a COOKED
+> plan name; the gate resolves the user's tier at login (highest-priced active plan via
+> `GET /api/plans?serviceCode=COOKED`) into the JWT `tier` claim, and `GET /tiers` proxies the list
+> for the admin matrix. Enforced independently of the trial axis. Seed the COOKED plans in
+> **subscription-service** (`db/seed.sql`, branch `feat-cooked-tier-plans`: Basic, Premium).
 
 Admin login: **`humanworkstream@gmail.com` / `Password123!`** (`ADMIN` — change the password
 after first sign-in). `seed.sql` also creates a display-only demo user (`demo@cooked.local`)

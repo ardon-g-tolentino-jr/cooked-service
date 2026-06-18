@@ -1,29 +1,23 @@
--- feat-tier-limits — per-tier (plan) access control, layered alongside the trial limits
+-- feat-tier-limits — per-tier feature settings, layered alongside the trial limits
 -- Schema: cooked
 --
 --   psql -U postgres -d cooked -f db/feat-tier-limits/01_tier_limits.sql
 --
--- Idempotent. Adds a tier registry, a per-(tier, component) limit matrix, and caches the
--- resolved subscription tier on each user. Independent of the existing trial_limit axis —
--- both are enforced; either can block.
+-- Idempotent. The TIER LIST is owned by the subscription service (a tier = a COOKED plan
+-- name); Cooked stores only a settings table of per-(tier, component) feature toggles + caps.
+-- Independent of the trial_limit axis — both are enforced; either can block.
 
 -- Cache the tier (subscription plan name) resolved at login by the subscription gate.
 ALTER TABLE cooked.app_user
   ADD COLUMN IF NOT EXISTS tier TEXT;
 
--- Registry of known tiers. `rank` orders them (higher = more access); used to pick the
--- winning tier when a user has multiple active accesses, and to define "upgrade" direction.
-CREATE TABLE IF NOT EXISTS cooked.tier (
-  name  TEXT PRIMARY KEY,            -- matches the subscription plan name
-  label TEXT,                        -- human-friendly display label
-  rank  INTEGER NOT NULL DEFAULT 0
-);
-
--- Admin-configurable limits, one row per (tier, component).
+-- Settings table: one row per (tier, component) the admin has configured. Sparse — a missing
+-- row means the feature is allowed for that tier. `tier` is a free-form subscription plan name
+-- (no local registry / FK; the subscription service is the source of truth for tiers).
 --   access_enabled = false → users on this tier are blocked from the component
 --   max_count      = N      → users on this tier may hold at most N items (NULL = unlimited)
 CREATE TABLE IF NOT EXISTS cooked.tier_limit (
-  tier           TEXT        NOT NULL REFERENCES cooked.tier(name) ON DELETE CASCADE,
+  tier           TEXT        NOT NULL,
   component      TEXT        NOT NULL,
   access_enabled BOOLEAN     NOT NULL DEFAULT true,
   max_count      INTEGER,
@@ -31,28 +25,12 @@ CREATE TABLE IF NOT EXISTS cooked.tier_limit (
   PRIMARY KEY (tier, component)
 );
 
--- Seed the tiers. Names must match the subscription COOKED plan names.
-INSERT INTO cooked.tier (name, label, rank) VALUES
-  ('basic',   'Basic',   1),
-  ('premium', 'Premium', 2)
-ON CONFLICT (name) DO NOTHING;
+-- Reconcile an earlier revision that referenced a local cooked.tier registry: drop the FK and
+-- the registry table if they exist (the tier list now comes from the subscription service).
+ALTER TABLE cooked.tier_limit DROP CONSTRAINT IF EXISTS tier_limit_tier_fkey;
+DROP TABLE IF EXISTS cooked.tier;
 
--- Default per-tier limits for the defined components (config, not user data; idempotent).
--- Basic: capped recipes/pantry, no meal planner. Premium: everything unlimited.
-INSERT INTO cooked.tier_limit (tier, component, access_enabled, max_count) VALUES
-  ('basic',   'meal_plan',   false, NULL),
-  ('basic',   'recipes',     true,  25),
-  ('basic',   'pantry',      true,  50),
-  ('basic',   'shopping',    true,  NULL),
-  ('basic',   'history',     true,  NULL),
-  ('basic',   'ingredients', true,  NULL),
-  ('premium', 'meal_plan',   true,  NULL),
-  ('premium', 'recipes',     true,  NULL),
-  ('premium', 'pantry',      true,  NULL),
-  ('premium', 'shopping',    true,  NULL),
-  ('premium', 'history',     true,  NULL),
-  ('premium', 'ingredients', true,  NULL)
-ON CONFLICT (tier, component) DO NOTHING;
+-- No tier rows are seeded here — the admin configures restrictions per tier in the app, and the
+-- tier names are discovered from the subscription COOKED plans.
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON cooked.tier       TO cooked_user;
 GRANT SELECT, INSERT, UPDATE, DELETE ON cooked.tier_limit TO cooked_user;

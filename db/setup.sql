@@ -259,41 +259,18 @@ INSERT INTO cooked.trial_limit (component, access_enabled, max_count) VALUES
   ('ingredients', true,  NULL)
 ON CONFLICT (component) DO NOTHING;
 
--- Tier (subscription plan) limits: admin-configurable, one row per (tier, component).
--- Independent of trial_limit — both axes are enforced; either can block. The tier registry
--- orders tiers by `rank` (higher = more access) and names must match subscription plan names.
-CREATE TABLE IF NOT EXISTS cooked.tier (
-  name  TEXT PRIMARY KEY,
-  label TEXT,
-  rank  INTEGER NOT NULL DEFAULT 0
-);
+-- Tier feature settings: per-(tier, component) toggle + optional cap, applied by the user's
+-- subscription tier. Independent of trial_limit — both are enforced; either can block. The tier
+-- LIST is owned by the subscription service (a tier = a COOKED plan name); this table is sparse
+-- (a missing row = allowed) and is populated by the admin, so no rows are seeded here.
 CREATE TABLE IF NOT EXISTS cooked.tier_limit (
-  tier           TEXT        NOT NULL REFERENCES cooked.tier(name) ON DELETE CASCADE,
+  tier           TEXT        NOT NULL,
   component      TEXT        NOT NULL,
   access_enabled BOOLEAN     NOT NULL DEFAULT true,
   max_count      INTEGER,
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (tier, component)
 );
--- default tiers + per-tier limits (config, not user data; idempotent)
-INSERT INTO cooked.tier (name, label, rank) VALUES
-  ('basic',   'Basic',   1),
-  ('premium', 'Premium', 2)
-ON CONFLICT (name) DO NOTHING;
-INSERT INTO cooked.tier_limit (tier, component, access_enabled, max_count) VALUES
-  ('basic',   'meal_plan',   false, NULL),
-  ('basic',   'recipes',     true,  25),
-  ('basic',   'pantry',      true,  50),
-  ('basic',   'shopping',    true,  NULL),
-  ('basic',   'history',     true,  NULL),
-  ('basic',   'ingredients', true,  NULL),
-  ('premium', 'meal_plan',   true,  NULL),
-  ('premium', 'recipes',     true,  NULL),
-  ('premium', 'pantry',      true,  NULL),
-  ('premium', 'shopping',    true,  NULL),
-  ('premium', 'history',     true,  NULL),
-  ('premium', 'ingredients', true,  NULL)
-ON CONFLICT (tier, component) DO NOTHING;
 
 -- ──────────────────────────────────────────────
 -- Permissions
