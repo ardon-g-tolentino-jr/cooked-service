@@ -25,11 +25,6 @@ CREATE TABLE IF NOT EXISTS cooked.tier_limit (
   PRIMARY KEY (tier, component)
 );
 
--- Reconcile an earlier revision that referenced a local cooked.tier registry: drop the FK and
--- the registry table if they exist (the tier list now comes from the subscription service).
-ALTER TABLE cooked.tier_limit DROP CONSTRAINT IF EXISTS tier_limit_tier_fkey;
-DROP TABLE IF EXISTS cooked.tier;
-
 -- No tier rows are seeded here — the admin configures restrictions per tier in the app, and the
 -- tier names are discovered from the subscription COOKED plans.
 
