@@ -31,6 +31,7 @@ public class AppUserService {
     private final JwtUtil jwtUtil;
     private final PasswordEncoder passwordEncoder;
     private final SubscriptionGateService subscriptionGate;
+    private final TierLimitService tierLimitService;
     private final GoogleTokenVerifier googleTokenVerifier;
     private final EmailService emailService;
 
@@ -83,12 +84,14 @@ public class AppUserService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
         }
         // Gate: only users with active Cooked access (redeemed code or subscription) may sign in.
-        // Returns whether that access is a TRIAL code; refresh the stored flag each login.
-        user.setTrial(subscriptionGate.assertActiveAccess(user.getEmail()));
+        // Returns the trial flag + active plan names; refresh trial + resolved tier each login.
+        SubscriptionGateService.GateResult gate = subscriptionGate.assertActiveAccess(user.getEmail());
+        user.setTrial(gate.trial());
+        user.setTier(tierLimitService.resolveTier(gate.planNames()));
         ensureTrialWindow(user);
         appUserRepository.save(user);
-        log.info("[AppUserService] Login userId={} trial={} fullAccessUntil={}",
-                user.getId(), user.isTrial(), user.getTrialFullAccessUntil());
+        log.info("[AppUserService] Login userId={} trial={} tier={} fullAccessUntil={}",
+                user.getId(), user.isTrial(), user.getTier(), user.getTrialFullAccessUntil());
         return authResponse(user);
     }
 
@@ -113,7 +116,7 @@ public class AppUserService {
 
         // Gate: only emails with active Cooked access may sign in (same rule as password login).
         // Checked before creating the local user so blocked accounts leave no orphan row.
-        boolean trial = subscriptionGate.assertActiveAccess(email);
+        SubscriptionGateService.GateResult gate = subscriptionGate.assertActiveAccess(email);
 
         AppUser user = appUserRepository.findOneByEmail(email).orElseGet(() -> {
             AppUser u = new AppUser();
@@ -122,11 +125,12 @@ public class AppUserService {
             // SSO account — password_hash stays null
             return u;
         });
-        user.setTrial(trial);
+        user.setTrial(gate.trial());
+        user.setTier(tierLimitService.resolveTier(gate.planNames()));
         ensureTrialWindow(user);
         user = appUserRepository.save(user);
-        log.info("[AppUserService] Google login userId={} trial={} fullAccessUntil={}",
-                user.getId(), user.isTrial(), user.getTrialFullAccessUntil());
+        log.info("[AppUserService] Google login userId={} trial={} tier={} fullAccessUntil={}",
+                user.getId(), user.isTrial(), user.getTier(), user.getTrialFullAccessUntil());
         return authResponse(user);
     }
 
@@ -181,9 +185,9 @@ public class AppUserService {
         OffsetDateTime until = user.isTrial() ? user.getTrialFullAccessUntil() : null;
         Long untilMs = until != null ? until.toInstant().toEpochMilli() : null;
         String untilIso = until != null ? until.toString() : null;
-        String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name(), user.isTrial(), untilMs);
+        String token = jwtUtil.generate(user.getEmail(), user.getId(), user.getRole().name(), user.isTrial(), untilMs, user.getTier());
         return new AuthResponse(token, user.getId(), user.getEmail(), user.getDisplayName(),
-                user.getRole().name(), user.isTrial(), untilIso, user.isPasswordTemporary());
+                user.getRole().name(), user.isTrial(), untilIso, user.getTier(), user.isPasswordTemporary());
     }
 
     @Transactional(readOnly = true)

@@ -45,6 +45,10 @@ public class AppUser {
     @Column(name = "trial_full_access_until")
     private OffsetDateTime trialFullAccessUntil;
 
+    // Subscription plan name resolved at login by the gate; drives tier_limit. Null = none.
+    @Column(name = "tier")
+    private String tier;
+
     // True after a password reset until the user chooses a new password → forces a change.
     @Column(name = "password_temporary", nullable = false)
     private boolean passwordTemporary = false;

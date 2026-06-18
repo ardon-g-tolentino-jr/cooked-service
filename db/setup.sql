@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS cooked.app_user (
   role          TEXT NOT NULL DEFAULT 'USER' CHECK (role IN ('USER', 'ADMIN')),
   is_trial      BOOLEAN NOT NULL DEFAULT false,    -- TRIAL-tier access (set from the registration code)
   trial_full_access_until TIMESTAMPTZ,             -- trial accounts: full access until this instant, then trial limits apply (see db/feat-trial-full-access)
+  tier          TEXT,                              -- subscription plan name resolved at login by the gate; drives tier_limit (see db/feat-tier-limits)
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -257,6 +258,42 @@ INSERT INTO cooked.trial_limit (component, access_enabled, max_count) VALUES
   ('history',     true,  NULL),
   ('ingredients', true,  NULL)
 ON CONFLICT (component) DO NOTHING;
+
+-- Tier (subscription plan) limits: admin-configurable, one row per (tier, component).
+-- Independent of trial_limit — both axes are enforced; either can block. The tier registry
+-- orders tiers by `rank` (higher = more access) and names must match subscription plan names.
+CREATE TABLE IF NOT EXISTS cooked.tier (
+  name  TEXT PRIMARY KEY,
+  label TEXT,
+  rank  INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS cooked.tier_limit (
+  tier           TEXT        NOT NULL REFERENCES cooked.tier(name) ON DELETE CASCADE,
+  component      TEXT        NOT NULL,
+  access_enabled BOOLEAN     NOT NULL DEFAULT true,
+  max_count      INTEGER,
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tier, component)
+);
+-- default tiers + per-tier limits (config, not user data; idempotent)
+INSERT INTO cooked.tier (name, label, rank) VALUES
+  ('basic',   'Basic',   1),
+  ('premium', 'Premium', 2)
+ON CONFLICT (name) DO NOTHING;
+INSERT INTO cooked.tier_limit (tier, component, access_enabled, max_count) VALUES
+  ('basic',   'meal_plan',   false, NULL),
+  ('basic',   'recipes',     true,  25),
+  ('basic',   'pantry',      true,  50),
+  ('basic',   'shopping',    true,  NULL),
+  ('basic',   'history',     true,  NULL),
+  ('basic',   'ingredients', true,  NULL),
+  ('premium', 'meal_plan',   true,  NULL),
+  ('premium', 'recipes',     true,  NULL),
+  ('premium', 'pantry',      true,  NULL),
+  ('premium', 'shopping',    true,  NULL),
+  ('premium', 'history',     true,  NULL),
+  ('premium', 'ingredients', true,  NULL)
+ON CONFLICT (tier, component) DO NOTHING;
 
 -- ──────────────────────────────────────────────
 -- Permissions

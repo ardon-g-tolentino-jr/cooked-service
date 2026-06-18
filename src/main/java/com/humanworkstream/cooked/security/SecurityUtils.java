@@ -40,4 +40,13 @@ public class SecurityUtils {
         }
         return null;
     }
+
+    /** The caller's subscription tier (plan name), or null when none resolved. Drives tier_limit. */
+    public String getTier() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof UserPrincipal p) {
+            return p.tier();
+        }
+        return null;
+    }
 }

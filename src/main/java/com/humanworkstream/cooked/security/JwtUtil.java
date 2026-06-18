@@ -24,13 +24,14 @@ public class JwtUtil {
         this.expirationMs = expirationMs;
     }
 
-    public String generate(String email, long userId, String role, boolean trial, Long trialUntilEpochMs) {
+    public String generate(String email, long userId, String role, boolean trial, Long trialUntilEpochMs, String tier) {
         var builder = Jwts.builder()
                 .subject(email)
                 .claim("userId", userId)
                 .claim("role", role)
                 .claim("trial", trial);
         if (trialUntilEpochMs != null) builder.claim("trialUntil", trialUntilEpochMs);
+        if (tier != null && !tier.isBlank()) builder.claim("tier", tier);
         return builder
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + expirationMs))

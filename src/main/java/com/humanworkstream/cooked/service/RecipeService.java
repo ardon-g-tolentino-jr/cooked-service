@@ -50,6 +50,7 @@ public class RecipeService {
     private final IngredientRepository ingredientRepository;
     private final CuisineRepository cuisineRepository;
     private final TrialLimitService trialLimits;
+    private final TierLimitService tierLimits;
     private final RecipeRatingRepository recipeRatingRepository;
     private final CookHistoryRepository cookHistoryRepository;
 
@@ -75,9 +76,12 @@ public class RecipeService {
 
     @Transactional
     public RecipeDetailResponse create(Long userId, RecipeCreateRequest req) {
-        // TRIAL tier: cap the number of recipes a trial user may own.
+        // Trial + subscription-tier limits: gate recipe creation and cap the count a user may own.
+        long ownedRecipes = recipeRepository.countByOwnerUserId(userId);
         trialLimits.assertEnabled(TrialLimitService.RECIPES);
-        trialLimits.assertUnderLimit(TrialLimitService.RECIPES, recipeRepository.countByOwnerUserId(userId));
+        tierLimits.assertEnabled(TrialLimitService.RECIPES);
+        trialLimits.assertUnderLimit(TrialLimitService.RECIPES, ownedRecipes);
+        tierLimits.assertUnderLimit(TrialLimitService.RECIPES, ownedRecipes);
         validateCuisine(req.cuisine());
         Recipe r = new Recipe();
         r.setName(req.name());

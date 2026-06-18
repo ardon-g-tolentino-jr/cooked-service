@@ -94,12 +94,12 @@ public class SubscriptionGateService {
         }
     }
 
-    /** Deny login unless the email has an active access record for this service. Fail-closed. */
-    /** @return true if the matched active COOKED access came from a TRIAL registration code. */
-    public boolean assertActiveAccess(String email) {
+    /** Deny login unless the email has an active access record for this service. Fail-closed.
+     * @return the trial flag plus the active COOKED plan (tier) names backing the access. */
+    public GateResult assertActiveAccess(String email) {
         if (!enabled) {
             log.warn("[SubscriptionGate] disabled — skipping access check for {}", email);
-            return false;
+            return new GateResult(false, List.of());
         }
         List<AccessRecord> records;
         try {
@@ -129,8 +129,16 @@ public class SubscriptionGateService {
         boolean trial = cookedAccess.stream()
                 .anyMatch(r -> r.regCode() != null && r.regCode().toUpperCase().contains("TRIAL"));
         if (trial) log.info("[SubscriptionGate] {} is on a TRIAL access code", email);
-        return trial;
+        List<String> planNames = cookedAccess.stream()
+                .map(AccessRecord::planName)
+                .filter(p -> p != null && !p.isBlank())
+                .distinct()
+                .toList();
+        return new GateResult(trial, planNames);
     }
+
+    /** Outcome of an access check: whether it's a trial code, and the active plan (tier) names. */
+    public record GateResult(boolean trial, List<String> planNames) {}
 
     /**
      * Non-throwing check: does this email already have active access for this service?
@@ -185,6 +193,8 @@ public class SubscriptionGateService {
     public record AccessRecord(
             @JsonProperty("serviceCode") String serviceCode,
             @JsonProperty("isActive") Boolean isActive,
-            @JsonProperty("regCode") String regCode) {
+            @JsonProperty("regCode") String regCode,
+            @JsonProperty("planId") Integer planId,
+            @JsonProperty("planName") String planName) {
     }
 }
