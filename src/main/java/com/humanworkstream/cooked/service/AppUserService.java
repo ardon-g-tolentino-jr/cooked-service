@@ -40,44 +40,60 @@ public class AppUserService {
 
     @Transactional
     public void register(RegisterRequest req) {
-        // Do not reveal whether an email is already registered (account enumeration). Silently
-        // no-op for an existing account; the controller returns the same generic 201 either way.
-        if (appUserRepository.existsByEmail(req.email())) {
-            log.info("[AppUserService] registration attempted for an already-registered email — silently ignored");
-            return;
+        String email = req.email().trim().toLowerCase();
+        String displayName = (req.displayName() != null && !req.displayName().isBlank())
+                ? req.displayName().trim() : email;
+
+        // A local account may already exist from a prior (possibly partial) signup, or the email
+        // may already be a client of the subscription service from another Human Workstream app.
+        // A *claimed* account — one whose owner has already set their own password — is protected:
+        // re-registering must not reset it. An *unclaimed* account (still on a temporary password,
+        // never used) is reconciled below: we re-provision access if needed and re-issue a fresh
+        // temporary password so a user who never received/used the first one — or who simply shares
+        // an email already known to the subscription service — can still complete onboarding.
+        AppUser existing = findByEmailFlexible(req.email().trim()).orElse(null);
+        if (existing != null && !existing.isPasswordTemporary()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "This email is already registered for Cooked. Please sign in, or use \"Forgot password\" to reset it.");
         }
+
         // Registration does not take a user-chosen password: we generate a temporary one,
         // store it (flagged temporary), and email it. The user sets their own on first sign-in.
         String temp = PasswordGenerator.generate(12);
         // Gate: validate + redeem the registration code on the subscription service before
         // creating the local account. Throws (aborting signup) if the code is missing/invalid.
-        //
-        // Reconcile a partial prior signup: provisioning is a remote call made before the local
-        // user is persisted, so an attempt that fails after provisioning leaves active access on
-        // the subscription side with no local user — permanently blocking re-registration. If the
-        // email already has active access, skip redemption and just create the local account.
-        if (subscriptionGate.hasActiveAccess(req.email())) {
-            log.info("[AppUserService] {} already has active Cooked access — skipping code redemption", req.email());
+        // Idempotent: if the email already has active Cooked access (a prior attempt, or another
+        // app), skip redemption and just create/reconcile the local account.
+        if (subscriptionGate.hasActiveAccess(email)) {
+            log.info("[AppUserService] {} already has active Cooked access — skipping code redemption", email);
         } else {
-            subscriptionGate.provisionViaCode(req.displayName(), req.email(), temp, req.registrationCode());
+            subscriptionGate.provisionViaCode(displayName, email, temp, req.registrationCode());
         }
-        AppUser user = new AppUser();
-        user.setEmail(req.email());
-        user.setDisplayName(req.displayName());
+        AppUser user = existing != null ? existing : new AppUser();
+        user.setEmail(email);
+        user.setDisplayName(displayName);
         user.setPasswordHash(passwordEncoder.encode(temp));
         user.setPasswordTemporary(true);
         // TRIAL tier: the registration code itself names the trial.
         user.setTrial(req.registrationCode() != null && req.registrationCode().toUpperCase().contains("TRIAL"));
         ensureTrialWindow(user);
         user = appUserRepository.save(user);
-        log.info("[AppUserService] Registered userId={} trial={} fullAccessUntil={} (temp password issued)",
+        log.info("[AppUserService] {} userId={} trial={} fullAccessUntil={} (temp password issued)",
+                existing == null ? "Registered" : "Reconciled unclaimed signup for",
                 user.getId(), user.isTrial(), user.getTrialFullAccessUntil());
         emailService.sendWelcomeEmail(user.getEmail(), user.getDisplayName(), temp);
     }
 
+    /** Look up a user by email, tolerant of stored case (new accounts are lowercased; legacy ones
+     *  may be mixed-case). Tries the value as-is, then a lowercased variant. */
+    private java.util.Optional<AppUser> findByEmailFlexible(String email) {
+        return appUserRepository.findOneByEmail(email)
+                .or(() -> appUserRepository.findOneByEmail(email.trim().toLowerCase()));
+    }
+
     @Transactional
     public AuthResponse login(LoginRequest req) {
-        AppUser user = appUserRepository.findOneByEmail(req.email())
+        AppUser user = findByEmailFlexible(req.email().trim())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials"));
         if (!passwordEncoder.matches(req.password(), user.getPasswordHash())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
@@ -107,17 +123,18 @@ public class AppUserService {
         } catch (SecurityException e) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid Google sign-in");
         }
-        String email = payload.getEmail();
-        if (email == null || email.isBlank()) {
+        String rawEmail = payload.getEmail();
+        if (rawEmail == null || rawEmail.isBlank()) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Google account has no email");
         }
+        String email = rawEmail.trim().toLowerCase();
         String name = payload.get("name") != null ? String.valueOf(payload.get("name")) : email;
 
         // Gate: only emails with active Cooked access may sign in (same rule as password login).
         // Checked before creating the local user so blocked accounts leave no orphan row.
         SubscriptionGateService.GateResult gate = subscriptionGate.assertActiveAccess(email);
 
-        AppUser user = appUserRepository.findOneByEmail(email).orElseGet(() -> {
+        AppUser user = findByEmailFlexible(email).orElseGet(() -> {
             AppUser u = new AppUser();
             u.setEmail(email);
             u.setDisplayName(name);
@@ -136,7 +153,7 @@ public class AppUserService {
     /** Reset to a system-generated temp password and email it. Silent if the email is unknown or SSO-only. */
     @Transactional
     public void forgotPassword(String email) {
-        appUserRepository.findOneByEmail(email).ifPresent(user -> {
+        findByEmailFlexible(email.trim()).ifPresent(user -> {
             if (user.getPasswordHash() == null) {
                 log.info("[AppUserService] forgot-password for SSO-only userId={} — skipped", user.getId());
                 return;
@@ -165,6 +182,27 @@ public class AppUserService {
         user.setPasswordTemporary(false);
         appUserRepository.save(user);
         log.info("[AppUserService] changed password for userId={}", user.getId());
+    }
+
+    /**
+     * In-app registration-code change for the signed-in user. Asks the subscription service to
+     * switch this email onto the new code's plan — it revokes the current Cooked access and
+     * redeems the new code in one transaction (a rejected code leaves the old access intact).
+     * Then re-resolves trial + tier (same as login) and returns a refreshed session so the new
+     * plan's limits/features apply immediately — no re-login required.
+     */
+    @Transactional
+    public AuthResponse changeRegistrationCode(Long userId, String registrationCode) {
+        AppUser user = findById(userId);
+        subscriptionGate.upgradeViaCode(user.getEmail(), registrationCode);
+        SubscriptionGateService.GateResult gate = subscriptionGate.assertActiveAccess(user.getEmail());
+        user.setTrial(gate.trial());
+        ensureTrialWindow(user);
+        user.setTier(effectiveTier(user, gate.tier()));
+        appUserRepository.save(user);
+        log.info("[AppUserService] Changed registration code for userId={} trial={} tier={}",
+                user.getId(), user.isTrial(), user.getTier());
+        return authResponse(user);
     }
 
     /**

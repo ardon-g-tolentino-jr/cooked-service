@@ -138,9 +138,10 @@ API base: `http://localhost:8082`. Health: `GET /healthcheck`.
 
 | Endpoint | Auth | Purpose |
 |---|---|---|
-| `POST /auth/register` | public | Passwordless signup (`{ displayName, email, registrationCode }`). Issues a system-generated temporary password by email; returns `201 { message }`, not a session. Requires a `registrationCode` redeemed on the subscription side. |
+| `POST /auth/register` | public | Passwordless signup (`{ displayName, email, registrationCode }`). Issues a system-generated temporary password by email; returns `201 { message }`, not a session. Requires a `registrationCode` redeemed on the subscription side (works even if the email already exists there from another HW app). **Idempotent**: re-registering an *unclaimed* account (still on its temp password) reconciles + re-issues the temp password; a *claimed* account (own password set) returns `409`. |
 | `POST /auth/login` | public | Email+password login. Gated on active `COOKED` access. |
 | `POST /auth/google` | public | Google SSO — verifies the ID token, applies the same gate, find-or-creates the user. Body `{ idToken }`. |
+| `PUT /users/me/registration-code` | user (JWT) | Change the signed-in user's registration code. Subscription revokes the current `COOKED` access and redeems the new code in one transaction (a rejected code leaves the existing plan intact); returns a refreshed `AuthResponse` so the new plan applies immediately. Body `{ registrationCode }`. |
 
 All issue a Cooked JWT (`AuthResponse { token, userId, email, displayName, role }`).
 

@@ -1,6 +1,8 @@
 package com.humanworkstream.cooked.controller;
 
+import com.humanworkstream.cooked.dto.AuthResponse;
 import com.humanworkstream.cooked.dto.ChangePasswordRequest;
+import com.humanworkstream.cooked.dto.ChangeRegistrationCodeRequest;
 import com.humanworkstream.cooked.dto.IngredientResponse;
 import com.humanworkstream.cooked.dto.UserIngredientEditRequest;
 import com.humanworkstream.cooked.dto.UserPatchRequest;
@@ -50,6 +52,14 @@ public class UserController {
     public ResponseEntity<Map<String, String>> changePassword(@Valid @RequestBody ChangePasswordRequest req) {
         appUserService.changePassword(securityUtils.getCurrentUserId(), req.currentPassword(), req.newPassword());
         return ResponseEntity.ok(Map.of("message", "Password updated."));
+    }
+
+    /** Authenticated in-app registration-code change: revoke the current code's access, redeem the
+     *  new one, and return a refreshed session so the new plan applies immediately (no re-login). */
+    @PutMapping("/me/registration-code")
+    public ResponseEntity<AuthResponse> changeRegistrationCode(@Valid @RequestBody ChangeRegistrationCodeRequest req) {
+        return ResponseEntity.ok(
+                appUserService.changeRegistrationCode(securityUtils.getCurrentUserId(), req.registrationCode()));
     }
 
     @GetMapping("/me/settings")

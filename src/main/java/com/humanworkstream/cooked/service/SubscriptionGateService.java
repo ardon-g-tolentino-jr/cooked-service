@@ -98,6 +98,41 @@ public class SubscriptionGateService {
         }
     }
 
+    /**
+     * In-app plan change: ask the subscription service to switch this email onto a new code's plan.
+     * The subscription side revokes the current Cooked access and redeems the new code in one
+     * transaction (a rejected code rolls back the revoke, so the client is never left without
+     * access). Server-to-server, X-Api-Key. Surfaces failures to the caller: a rejected code is a 400.
+     */
+    public void upgradeViaCode(String email, String registrationCode) {
+        if (!enabled) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Changing your registration code is unavailable in this environment.");
+        }
+        if (registrationCode == null || registrationCode.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A registration code is required");
+        }
+        Map<String, String> body = Map.of("email", email, "registrationCode", registrationCode);
+        try {
+            restClient.post()
+                    .uri("/api/subscription/upgrade-code")
+                    .header("X-Api-Key", apiKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .toBodilessEntity();
+            log.info("[SubscriptionGate] applied new registration code for {}", email);
+        } catch (RestClientResponseException e) {
+            String msg = extractMessage(e, "Your registration code could not be applied.");
+            log.warn("[SubscriptionGate] code change rejected for {}: {} {}", email, e.getStatusCode(), msg);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, msg);
+        } catch (Exception e) {
+            log.error("[SubscriptionGate] subscription service unreachable during code change for {}", email, e);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Unable to apply your new registration code right now. Please try again later.");
+        }
+    }
+
     /** Deny login unless the email has an active access record for this service. Fail-closed.
      * @return the trial flag plus the resolved tier (the subscription plan backing the access). */
     public GateResult assertActiveAccess(String email) {
