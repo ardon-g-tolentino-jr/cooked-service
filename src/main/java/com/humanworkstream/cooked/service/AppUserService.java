@@ -31,7 +31,6 @@ public class AppUserService {
     private final JwtUtil jwtUtil;
     private final PasswordEncoder passwordEncoder;
     private final SubscriptionGateService subscriptionGate;
-    private final TierLimitService tierLimitService;
     private final GoogleTokenVerifier googleTokenVerifier;
     private final EmailService emailService;
 
@@ -87,7 +86,7 @@ public class AppUserService {
         // Returns the trial flag + active plan names; refresh trial + resolved tier each login.
         SubscriptionGateService.GateResult gate = subscriptionGate.assertActiveAccess(user.getEmail());
         user.setTrial(gate.trial());
-        user.setTier(tierLimitService.resolveTier(gate.planNames()));
+        user.setTier(gate.tier());
         ensureTrialWindow(user);
         appUserRepository.save(user);
         log.info("[AppUserService] Login userId={} trial={} tier={} fullAccessUntil={}",
@@ -126,7 +125,7 @@ public class AppUserService {
             return u;
         });
         user.setTrial(gate.trial());
-        user.setTier(tierLimitService.resolveTier(gate.planNames()));
+        user.setTier(gate.tier());
         ensureTrialWindow(user);
         user = appUserRepository.save(user);
         log.info("[AppUserService] Google login userId={} trial={} tier={} fullAccessUntil={}",

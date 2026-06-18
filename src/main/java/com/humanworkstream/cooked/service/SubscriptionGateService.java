@@ -12,8 +12,12 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Gates Cooked access against the Subscription service. All calls are server-to-server,
@@ -95,11 +99,11 @@ public class SubscriptionGateService {
     }
 
     /** Deny login unless the email has an active access record for this service. Fail-closed.
-     * @return the trial flag plus the active COOKED plan (tier) names backing the access. */
+     * @return the trial flag plus the resolved tier (the subscription plan backing the access). */
     public GateResult assertActiveAccess(String email) {
         if (!enabled) {
             log.warn("[SubscriptionGate] disabled — skipping access check for {}", email);
-            return new GateResult(false, List.of());
+            return new GateResult(false, null);
         }
         List<AccessRecord> records;
         try {
@@ -134,11 +138,68 @@ public class SubscriptionGateService {
                 .filter(p -> p != null && !p.isBlank())
                 .distinct()
                 .toList();
-        return new GateResult(trial, planNames);
+        return new GateResult(trial, resolveTier(planNames));
     }
 
-    /** Outcome of an access check: whether it's a trial code, and the active plan (tier) names. */
-    public record GateResult(boolean trial, List<String> planNames) {}
+    /** Outcome of an access check: whether it's a trial code, and the resolved tier (plan name). */
+    public record GateResult(boolean trial, String tier) {}
+
+    /**
+     * Resolve the user's tier from their active plan name(s). The tier list is owned by the
+     * subscription service — when a user has more than one active plan, the highest-priced
+     * (by the subscription catalog amount) wins. Single/zero plans need no catalog lookup, so
+     * the common path makes no extra call. Fail-soft: a catalog error falls back to the first
+     * plan name rather than denying access (the access check already passed).
+     */
+    private String resolveTier(List<String> planNames) {
+        if (planNames.isEmpty()) return null;
+        if (planNames.size() == 1) return planNames.get(0);
+        Map<String, BigDecimal> amounts = tierCatalogSafe().stream()
+                .collect(Collectors.toMap(t -> t.name().toLowerCase(Locale.ROOT),
+                        TierInfo::amount, (a, b) -> a));
+        return planNames.stream()
+                .max(Comparator.comparing(n -> amounts.getOrDefault(n.toLowerCase(Locale.ROOT), BigDecimal.ZERO)))
+                .orElse(planNames.get(0));
+    }
+
+    /** Active COOKED tier names, highest-priced first — for the admin matrix. Empty on error. */
+    public List<String> listTierNames() {
+        return tierCatalogSafe().stream()
+                .sorted(Comparator.comparing(TierInfo::amount).reversed())
+                .map(TierInfo::name)
+                .toList();
+    }
+
+    /** Fetch the COOKED plans (tiers) from the subscription service. Never throws. */
+    private List<TierInfo> tierCatalogSafe() {
+        if (!enabled) return List.of();
+        try {
+            List<PlanRecord> plans = restClient.get()
+                    .uri(b -> b.path("/api/plans").queryParam("serviceCode", serviceCode).build())
+                    .header("X-Api-Key", apiKey)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<List<PlanRecord>>() {});
+            if (plans == null) return List.of();
+            return plans.stream()
+                    .filter(p -> p.name() != null && !Boolean.FALSE.equals(p.isActive()))
+                    .map(p -> new TierInfo(p.name(), p.amount() != null ? p.amount() : BigDecimal.ZERO))
+                    .toList();
+        } catch (Exception e) {
+            log.warn("[SubscriptionGate] could not fetch {} tier catalog ({})", serviceCode, e.toString());
+            return List.of();
+        }
+    }
+
+    /** A COOKED tier as defined by the subscription service. */
+    public record TierInfo(String name, BigDecimal amount) {}
+
+    /** Subset of the subscription PlanResponse we care about. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record PlanRecord(
+            @JsonProperty("name") String name,
+            @JsonProperty("amount") BigDecimal amount,
+            @JsonProperty("isActive") Boolean isActive) {
+    }
 
     /**
      * Non-throwing check: does this email already have active access for this service?
