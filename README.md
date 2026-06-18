@@ -62,8 +62,8 @@ schema (e.g. `db/feat-ingredient-source/01_user_role.sql`,
 > `app_user.tier` column. The **tier list is owned by subscription-service** — a tier is a COOKED
 > plan name; the gate resolves the user's tier at login (highest-priced active plan via
 > `GET /api/plans?serviceCode=COOKED`) into the JWT `tier` claim, and `GET /tiers` proxies the list
-> for the admin matrix. Enforced independently of the trial axis. Seed the COOKED plans in
-> **subscription-service** (`db/seed.sql`, branch `feat-cooked-tier-plans`: Basic, Premium).
+> for the admin matrix. Enforced independently of the trial axis. The COOKED service and its plan
+> tiers are created in the **subscription admin UI** (not seeded) and discovered at runtime.
 
 Admin login: **`humanworkstream@gmail.com` / `Password123!`** (`ADMIN` — change the password
 after first sign-in). `seed.sql` also creates a display-only demo user (`demo@cooked.local`)
