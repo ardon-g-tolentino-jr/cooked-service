@@ -25,6 +25,7 @@ public class ShoppingService {
     private final ShoppingItemRepository shoppingItemRepository;
     private final IngredientRepository ingredientRepository;
     private final TrialLimitService trialLimits;
+    private final TierLimitService tierLimits;
 
     @Transactional(readOnly = true)
     public List<ShoppingItemResponse> list(Long userId) {
@@ -39,6 +40,7 @@ public class ShoppingService {
     @Transactional
     public ShoppingItemResponse add(Long userId, ShoppingItemAddRequest req) {
         trialLimits.assertEnabled(TrialLimitService.SHOPPING);
+        tierLimits.assertEnabled(TrialLimitService.SHOPPING);
         ingredientRepository.findById(req.ingredientId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown ingredient"));
         ShoppingItem item = shoppingItemRepository

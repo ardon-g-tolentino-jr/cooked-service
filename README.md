@@ -54,7 +54,14 @@ Per-branch migrations live in `db/<branch-name>/NN_*.sql` — apply any that pos
 schema (e.g. `db/feat-ingredient-source/01_user_role.sql`,
 `db/feat-complete-api/01_add_password_hash.sql`, `db/feat-meal-planner/01_meal_plan.sql`,
 `db/feat-pantry-templates/01_pantry_template.sql`,
-`db/feat-trial-full-access/01_trial_full_access.sql`).
+`db/feat-trial-full-access/01_trial_full_access.sql`,
+`db/feat-tier-limits/01_tier_limits.sql`).
+
+> **Subscription tiers** (`feat-tier-limits`): `db/feat-tier-limits/01_tier_limits.sql` adds the
+> `tier` registry + `tier_limit` matrix and an `app_user.tier` column. Tier limits apply by the
+> user's subscription plan (resolved at login, carried in the JWT `tier` claim), independently of
+> the trial axis. Tier names must match the COOKED plan names seeded in **subscription-service**
+> (`db/seed.sql`, branch `feat-cooked-tier-plans`: Basic, Premium).
 
 Admin login: **`humanworkstream@gmail.com` / `Password123!`** (`ADMIN` — change the password
 after first sign-in). `seed.sql` also creates a display-only demo user (`demo@cooked.local`)

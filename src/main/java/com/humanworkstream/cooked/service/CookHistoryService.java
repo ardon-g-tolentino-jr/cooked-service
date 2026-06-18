@@ -37,10 +37,12 @@ public class CookHistoryService {
     private final UserIngredientEditRepository editRepository;
     private final PantryService pantryService;
     private final TrialLimitService trialLimits;
+    private final TierLimitService tierLimits;
 
     @Transactional(readOnly = true)
     public List<CookHistoryResponse> list(Long userId) {
         trialLimits.assertEnabled(TrialLimitService.HISTORY);
+        tierLimits.assertEnabled(TrialLimitService.HISTORY);
         return cookHistoryRepository.findByUserIdOrderByCookedAtDesc(userId).stream()
                 .map(h -> {
                     List<CookHistoryItemResponse> items = cookHistoryItemRepository
