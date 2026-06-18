@@ -86,8 +86,8 @@ public class AppUserService {
         // Returns the trial flag + active plan names; refresh trial + resolved tier each login.
         SubscriptionGateService.GateResult gate = subscriptionGate.assertActiveAccess(user.getEmail());
         user.setTrial(gate.trial());
-        user.setTier(gate.tier());
         ensureTrialWindow(user);
+        user.setTier(effectiveTier(user, gate.tier()));
         appUserRepository.save(user);
         log.info("[AppUserService] Login userId={} trial={} tier={} fullAccessUntil={}",
                 user.getId(), user.isTrial(), user.getTier(), user.getTrialFullAccessUntil());
@@ -125,8 +125,8 @@ public class AppUserService {
             return u;
         });
         user.setTrial(gate.trial());
-        user.setTier(gate.tier());
         ensureTrialWindow(user);
+        user.setTier(effectiveTier(user, gate.tier()));
         user = appUserRepository.save(user);
         log.info("[AppUserService] Google login userId={} trial={} tier={} fullAccessUntil={}",
                 user.getId(), user.isTrial(), user.getTier(), user.getTrialFullAccessUntil());
@@ -177,6 +177,26 @@ public class AppUserService {
             OffsetDateTime anchor = user.getCreatedAt() != null ? user.getCreatedAt() : OffsetDateTime.now();
             user.setTrialFullAccessUntil(anchor.plusDays(fullAccessDays));
         }
+    }
+
+    /**
+     * Resolve the tier carried in the JWT.
+     * <ul>
+     *   <li>Active trial (within its window): the built-in TRIAL TIER applies (all features on,
+     *       recipe count capped by {@link TrialLimitService}) — no subscription tier, so null.</li>
+     *   <li>Expired trial: degrade to the FREE subscription tier (the plan named "Free"), whose
+     *       admin-defined {@code tier_limit} restrictions then apply.</li>
+     *   <li>Otherwise: the user's own subscription plan tier.</li>
+     * </ul>
+     * Call after {@link #ensureTrialWindow} so the window is set for brand-new trials.
+     */
+    private String effectiveTier(AppUser user, String planTier) {
+        if (user.isTrial()) {
+            OffsetDateTime until = user.getTrialFullAccessUntil();
+            boolean active = until != null && OffsetDateTime.now().isBefore(until);
+            return active ? null : subscriptionGate.freeTierName();
+        }
+        return planTier;
     }
 
     private AuthResponse authResponse(AppUser user) {

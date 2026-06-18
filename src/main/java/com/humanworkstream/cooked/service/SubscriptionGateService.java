@@ -162,6 +162,16 @@ public class SubscriptionGateService {
                 .orElse(planNames.get(0));
     }
 
+    /** The subscription plan named "Free" (case-insensitive), or null if none — the tier an
+     *  expired trial degrades to. Returns the catalog's exact casing for tier_limit matching. */
+    public String freeTierName() {
+        return tierCatalogSafe().stream()
+                .map(TierInfo::name)
+                .filter(n -> "free".equalsIgnoreCase(n))
+                .findFirst()
+                .orElse(null);
+    }
+
     /** Active COOKED tier names, highest-priced first — for the admin matrix. Empty on error. */
     public List<String> listTierNames() {
         return tierCatalogSafe().stream()

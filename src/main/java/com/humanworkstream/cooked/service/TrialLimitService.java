@@ -31,16 +31,16 @@ public class TrialLimitService {
     private final SecurityUtils securityUtils;
 
     /**
-     * Whether trial limits currently apply to the caller. True only for trial users whose
-     * full-access window has ended (now >= trialUntil). During the window — or when the
-     * window is unknown is treated conservatively as ended — see below. Non-trial users
-     * are never limited.
+     * Whether the built-in TRIAL TIER currently applies to the caller — i.e. they are a trial
+     * user still within their window. The TRIAL TIER enables all features but caps the recipe
+     * count. After the window ends the user degrades to the FREE subscription tier (enforced by
+     * {@link TierLimitService}), so this returns false. Non-trial users are never on the trial tier.
      */
-    private boolean isLimitedTrial() {
+    private boolean isActiveTrial() {
         if (!securityUtils.isTrial()) return false;
         Long until = securityUtils.getTrialUntil();
-        // null (legacy token without the claim) → treat as limited, never grant endless full access
-        return until == null || System.currentTimeMillis() >= until;
+        // null (legacy token without the claim) → treat as already expired (no endless trial tier)
+        return until != null && System.currentTimeMillis() < until;
     }
 
     @Transactional(readOnly = true)
@@ -57,27 +57,26 @@ public class TrialLimitService {
         return trialLimitRepository.save(limit);
     }
 
-    /** Block a trial user from a component whose access is disabled. No-op for non-trial users. */
+    /**
+     * No-op: the TRIAL TIER enables every feature. (Feature-level restrictions only apply after
+     * the trial expires, via the FREE tier in {@link TierLimitService}.) Kept so call sites can
+     * pair it with the tier check uniformly.
+     */
     @Transactional(readOnly = true)
     public void assertEnabled(String component) {
-        if (!isLimitedTrial()) return;
-        trialLimitRepository.findById(component).ifPresent(limit -> {
-            if (!limit.isAccessEnabled()) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                        "Your trial plan doesn't include this feature. Upgrade to unlock it.");
-            }
-        });
+        // intentionally empty — all features are available during the trial
     }
 
-    /** Block a trial user at/over the component's item cap. No-op for non-trial users or no cap. */
+    /** Cap an active trial user at the component's item limit (e.g. the trial recipe count).
+     * No-op for non-trial/expired users or components without a configured cap. */
     @Transactional(readOnly = true)
     public void assertUnderLimit(String component, long currentCount) {
-        if (!isLimitedTrial()) return;
+        if (!isActiveTrial()) return;
         trialLimitRepository.findById(component).ifPresent(limit -> {
             Integer max = limit.getMaxCount();
             if (max != null && currentCount >= max) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        "Trial limit reached: your plan allows at most " + max + ". Upgrade for more.");
+                        "Trial limit reached: your trial allows at most " + max + ". Upgrade for more.");
             }
         });
     }
