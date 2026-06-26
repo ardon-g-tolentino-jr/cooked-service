@@ -60,12 +60,17 @@ public class AppUserService {
         // Registration does not take a user-chosen password: we generate a temporary one,
         // store it (flagged temporary), and email it. The user sets their own on first sign-in.
         String temp = PasswordGenerator.generate(12);
-        // Gate: validate + redeem the registration code on the subscription service before
-        // creating the local account. Throws (aborting signup) if the code is missing/invalid.
-        // Idempotent: if the email already has active Cooked access (a prior attempt, or another
-        // app), skip redemption and just create/reconcile the local account.
+        // A blank/absent registration code starts a code-less free trial; the subscription service
+        // issues the trial code. A non-blank code takes the paid redemption path.
+        boolean isTrial = req.registrationCode() == null || req.registrationCode().isBlank();
+        // Gate: provision Cooked access on the subscription service before creating the local
+        // account. Throws (aborting signup) if the code/trial is rejected. Idempotent: if the email
+        // already has active Cooked access (a prior attempt, or another app), skip provisioning and
+        // just create/reconcile the local account.
         if (subscriptionGate.hasActiveAccess(email)) {
-            log.info("[AppUserService] {} already has active Cooked access — skipping code redemption", email);
+            log.info("[AppUserService] {} already has active Cooked access — skipping provisioning", email);
+        } else if (isTrial) {
+            subscriptionGate.provisionTrial(displayName, email, temp);
         } else {
             subscriptionGate.provisionViaCode(displayName, email, temp, req.registrationCode());
         }
@@ -74,8 +79,9 @@ public class AppUserService {
         user.setDisplayName(displayName);
         user.setPasswordHash(passwordEncoder.encode(temp));
         user.setPasswordTemporary(true);
-        // TRIAL tier: the registration code itself names the trial.
-        user.setTrial(req.registrationCode() != null && req.registrationCode().toUpperCase().contains("TRIAL"));
+        // TRIAL tier: a blank-code signup, or a code that itself names the trial.
+        user.setTrial(isTrial
+                || (req.registrationCode() != null && req.registrationCode().toUpperCase().contains("TRIAL")));
         ensureTrialWindow(user);
         user = appUserRepository.save(user);
         log.info("[AppUserService] {} userId={} trial={} fullAccessUntil={} (temp password issued)",
