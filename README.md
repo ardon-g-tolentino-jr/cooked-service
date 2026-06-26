@@ -138,7 +138,7 @@ API base: `http://localhost:8082`. Health: `GET /healthcheck`.
 
 | Endpoint | Auth | Purpose |
 |---|---|---|
-| `POST /auth/register` | public | Passwordless signup (`{ displayName, email, registrationCode }`). Issues a system-generated temporary password by email; returns `201 { message }`, not a session. Requires a `registrationCode` redeemed on the subscription side (works even if the email already exists there from another HW app). **Idempotent**: re-registering an *unclaimed* account (still on its temp password) reconciles + re-issues the temp password; a *claimed* account (own password set) returns `409`. |
+| `POST /auth/register` | public | Passwordless signup (`{ displayName, email, registrationCode }`). Issues a system-generated temporary password by email; returns `201 { message }`, not a session. The `registrationCode` is **optional**: a non-blank code is redeemed on the subscription side (works even if the email already exists there from another HW app), while a **blank/absent code starts a 14-day free trial** (`SubscriptionGateService.provisionTrial` → subscription `POST /api/subscription/trial`). **Idempotent**: re-registering an *unclaimed* account (still on its temp password) reconciles + re-issues the temp password; a *claimed* account (own password set) returns `409`. |
 | `POST /auth/login` | public | Email+password login. Gated on active `COOKED` access. |
 | `POST /auth/google` | public | Google SSO — verifies the ID token, applies the same gate, find-or-creates the user. Body `{ idToken }`. |
 | `PUT /users/me/registration-code` | user (JWT) | Change the signed-in user's registration code. Subscription revokes the current `COOKED` access and redeems the new code in one transaction (a rejected code leaves the existing plan intact); returns a refreshed `AuthResponse` so the new plan applies immediately. Body `{ registrationCode }`. |
@@ -151,10 +151,18 @@ All issue a Cooked JWT (`AuthResponse { token, userId, email, displayName, role 
 
 ### Subscription access gate
 Only users with active `COOKED` access in the subscription-service (redeemed registration
-code **or** active subscription) can register/log in. Enforced server-to-server with
-`SUBSCRIPTION_API_KEY` (never exposed to the browser); **fail-closed** — any error denies
+code, **a free trial**, or an active subscription) can register/log in. Enforced server-to-server
+with `SUBSCRIPTION_API_KEY` (never exposed to the browser); **fail-closed** — any error denies
 entry. Prerequisites: a `COOKED` row in the subscription DB's `subscription_mgmt.services`,
 and provisioned access for each user. Disable locally with `SUBSCRIPTION_GATE_ENABLED=false`.
+
+**Free trial:** registering with a blank/absent code calls subscription `POST /api/subscription/trial`,
+which resolves or auto-provisions the COOKED `Trial` plan (default 14 days), issues a one-use
+`TRIAL-AUTO` code and redeems it → a time-limited access window. Trial length is owned by the
+subscription `Trial` plan's `trialPeriodDays`; keep `COOKED_TRIAL_FULL_ACCESS_DAYS` aligned with it.
+On expiry the access record simply lapses and login resolves the user to the **Free** tier — no
+trial-expiry code runs here. When the gate is off (local dev) trial provisioning is a no-op so a
+local account can still be created.
 
 ### Google SSO
 `GoogleTokenVerifier` validates the ID token against `google.client-id` (defaults to the

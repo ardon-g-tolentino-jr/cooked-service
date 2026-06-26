@@ -99,6 +99,49 @@ public class SubscriptionGateService {
     }
 
     /**
+     * Start a code-less free trial: ask the subscription service to place this email on a
+     * time-limited TRIAL for {@code serviceCode}. The subscription side resolves or auto-provisions
+     * the service's trial plan, gets-or-creates the client, generates a one-use TRIAL reg-code and
+     * redeems it. Server-to-server, X-Api-Key. Throws (aborting signup) if the trial is rejected.
+     */
+    public void provisionTrial(String displayName, String email, String password) {
+        if (!enabled) {
+            log.warn("[SubscriptionGate] disabled — skipping trial provisioning for {}", email);
+            return;
+        }
+        Map<String, String> body = Map.of(
+                "name", displayName,
+                "doctorName", displayName,
+                "email", email,
+                "password", password,
+                "serviceCode", serviceCode);
+        try {
+            restClient.post()
+                    .uri("/api/subscription/trial")
+                    .header("X-Api-Key", apiKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .toBodilessEntity();
+            log.info("[SubscriptionGate] started trial for {}", email);
+        } catch (RestClientResponseException e) {
+            // 409 = the email already holds active access; treat as an idempotent no-op (a retried
+            // signup) so registration can finish creating/reconciling the local account.
+            if (e.getStatusCode().value() == HttpStatus.CONFLICT.value()) {
+                log.info("[SubscriptionGate] {} already has active access — treating trial as a no-op (idempotent)", email);
+                return;
+            }
+            String msg = extractMessage(e, "Your free trial could not be started.");
+            log.warn("[SubscriptionGate] trial provisioning rejected for {}: {} {}", email, e.getStatusCode(), msg);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, msg);
+        } catch (Exception e) {
+            log.error("[SubscriptionGate] subscription service unreachable during trial signup for {}", email, e);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Unable to start your free trial right now. Please try again later.");
+        }
+    }
+
+    /**
      * In-app plan change: ask the subscription service to switch this email onto a new code's plan.
      * The subscription side revokes the current Cooked access and redeems the new code in one
      * transaction (a rejected code rolls back the revoke, so the client is never left without
