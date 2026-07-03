@@ -47,6 +47,10 @@ public class Recipe {
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
+    // Optional dish photo shown on the Menu view; null falls back to a monogram tile
+    @Column(name = "photo_url")
+    private String photoUrl;
+
     @PrePersist
     protected void onCreate() {
         createdAt = OffsetDateTime.now();

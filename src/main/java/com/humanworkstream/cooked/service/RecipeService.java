@@ -89,6 +89,7 @@ public class RecipeService {
         r.setCuisine(req.cuisine());
         r.setPrepTimeMin(req.prepTimeMin());
         r.setServings(req.servings());
+        r.setPhotoUrl(req.photoUrl());
         r = recipeRepository.save(r);
         Long recipeId = r.getId();
         saveMoods(recipeId, req.moods());
@@ -106,6 +107,7 @@ public class RecipeService {
         if (req.prepTimeMin() != null) r.setPrepTimeMin(req.prepTimeMin());
         if (req.servings() != null) r.setServings(req.servings());
         if (req.isShared() != null) r.setIsShared(req.isShared());
+        if (req.photoUrl() != null) r.setPhotoUrl(req.photoUrl());
         return buildDetail(recipeRepository.save(r), userId);
     }
 

@@ -5,6 +5,7 @@ public record RecipePatchRequest(
         String cuisine,
         Integer prepTimeMin,
         Integer servings,
-        Boolean isShared
+        Boolean isShared,
+        String photoUrl
 ) {
 }
