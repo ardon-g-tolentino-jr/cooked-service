@@ -13,6 +13,7 @@ public record RecipeCreateRequest(
         @NotNull @Min(1) Integer servings,
         List<String> moods,
         List<RecipeIngredientRequest> ingredients,
-        List<RecipeInstructionRequest> instructions
+        List<RecipeInstructionRequest> instructions,
+        String photoUrl
 ) {
 }

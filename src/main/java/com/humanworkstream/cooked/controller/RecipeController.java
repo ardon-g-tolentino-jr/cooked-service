@@ -15,6 +15,7 @@ import com.humanworkstream.cooked.service.RecipeService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -92,5 +94,20 @@ public class RecipeController {
     public ResponseEntity<RecipeDetailResponse> rate(
             @PathVariable Long id, @Valid @RequestBody RatingRequest req) {
         return ResponseEntity.ok(recipeService.rate(securityUtils.getCurrentUserId(), id, req.stars()));
+    }
+
+    @PostMapping(value = "/{id}/photo", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<RecipeDetailResponse> uploadPhoto(
+            @PathVariable Long id, @RequestParam("file") MultipartFile file) {
+        return ResponseEntity.ok(recipeService.uploadPhoto(id, securityUtils.getCurrentUserId(), file));
+    }
+
+    // Public (see SecurityConfig) — <img> tags can't send an Authorization header.
+    @GetMapping("/{id}/photo")
+    public ResponseEntity<byte[]> getPhoto(@PathVariable Long id) {
+        RecipeService.RecipePhoto photo = recipeService.getPhoto(id);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(photo.contentType()))
+                .body(photo.data());
     }
 }

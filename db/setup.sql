@@ -308,4 +308,12 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA cooked
 ALTER DEFAULT PRIVILEGES IN SCHEMA cooked
   GRANT USAGE, SELECT ON SEQUENCES TO cooked_user;
 
+-- ──────────────────────────────────────────────
+-- feat-recipe-menu-page: optional dish photo for the menu view
+-- ──────────────────────────────────────────────
+
+ALTER TABLE cooked.recipe ADD COLUMN IF NOT EXISTS photo_url TEXT;
+ALTER TABLE cooked.recipe ADD COLUMN IF NOT EXISTS photo_data BYTEA;
+ALTER TABLE cooked.recipe ADD COLUMN IF NOT EXISTS photo_content_type TEXT;
+
 ALTER ROLE cooked_user IN DATABASE cooked SET search_path = cooked, public;

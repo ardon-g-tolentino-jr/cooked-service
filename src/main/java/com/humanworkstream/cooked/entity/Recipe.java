@@ -47,6 +47,18 @@ public class Recipe {
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
+    // Optional dish photo shown on the Menu view; null falls back to a monogram tile.
+    // Either photoUrl (external link) or photoData (uploaded file) is set, never both —
+    // setting one clears the other. photoData wins when present (see the response DTOs).
+    @Column(name = "photo_url")
+    private String photoUrl;
+
+    @Column(name = "photo_data")
+    private byte[] photoData;
+
+    @Column(name = "photo_content_type")
+    private String photoContentType;
+
     @PrePersist
     protected void onCreate() {
         createdAt = OffsetDateTime.now();
