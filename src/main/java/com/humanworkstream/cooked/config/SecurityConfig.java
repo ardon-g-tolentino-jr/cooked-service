@@ -55,6 +55,8 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/auth/google").permitAll()
                 .requestMatchers(HttpMethod.POST, "/auth/forgot-password").permitAll()
                 .requestMatchers("/healthcheck", "/db/healthcheck", "/db/schema/healthcheck", "/error").permitAll()
+                // <img> tags can't send an Authorization header, so uploaded recipe photos are served publicly.
+                .requestMatchers(HttpMethod.GET, "/recipes/*/photo").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)

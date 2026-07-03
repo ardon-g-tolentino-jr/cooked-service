@@ -313,5 +313,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA cooked
 -- ──────────────────────────────────────────────
 
 ALTER TABLE cooked.recipe ADD COLUMN IF NOT EXISTS photo_url TEXT;
+ALTER TABLE cooked.recipe ADD COLUMN IF NOT EXISTS photo_data BYTEA;
+ALTER TABLE cooked.recipe ADD COLUMN IF NOT EXISTS photo_content_type TEXT;
 
 ALTER ROLE cooked_user IN DATABASE cooked SET search_path = cooked, public;

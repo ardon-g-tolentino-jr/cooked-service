@@ -22,7 +22,8 @@ public record RecipeDetailResponse(
         Double ratingAvg,
         long ratingCount,
         Integer myRating,
-        String photoUrl
+        String photoUrl,
+        boolean hasCustomPhoto
 ) {
     public static RecipeDetailResponse from(Recipe r,
                                             List<String> moods,
@@ -35,6 +36,7 @@ public record RecipeDetailResponse(
                 r.getId(), r.getName(), r.getOwnerUserId(), r.getAuthorLabel(),
                 r.getCuisine(), r.getPrepTimeMin(), r.getServings(),
                 r.getIsCommunity(), r.getIsShared(), moods, ingredients, instructions,
-                r.getCreatedAt(), ratingAvg, ratingCount, myRating, r.getPhotoUrl());
+                r.getCreatedAt(), ratingAvg, ratingCount, myRating,
+                r.getPhotoUrl(), r.getPhotoData() != null);
     }
 }

@@ -17,12 +17,14 @@ public record RecipeSummaryResponse(
         Boolean isShared,
         List<String> moods,
         OffsetDateTime createdAt,
-        String photoUrl
+        String photoUrl,
+        boolean hasCustomPhoto
 ) {
     public static RecipeSummaryResponse from(Recipe r, List<String> moods) {
         return new RecipeSummaryResponse(
                 r.getId(), r.getName(), r.getOwnerUserId(), r.getAuthorLabel(),
                 r.getCuisine(), r.getPrepTimeMin(), r.getServings(),
-                r.getIsCommunity(), r.getIsShared(), moods, r.getCreatedAt(), r.getPhotoUrl());
+                r.getIsCommunity(), r.getIsShared(), moods, r.getCreatedAt(),
+                r.getPhotoUrl(), r.getPhotoData() != null);
     }
 }

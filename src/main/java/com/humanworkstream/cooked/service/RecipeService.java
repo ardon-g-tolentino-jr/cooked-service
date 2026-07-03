@@ -31,8 +31,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -107,8 +109,43 @@ public class RecipeService {
         if (req.prepTimeMin() != null) r.setPrepTimeMin(req.prepTimeMin());
         if (req.servings() != null) r.setServings(req.servings());
         if (req.isShared() != null) r.setIsShared(req.isShared());
-        if (req.photoUrl() != null) r.setPhotoUrl(req.photoUrl());
+        if (req.photoUrl() != null) {
+            // Setting an external URL replaces any previously uploaded file.
+            r.setPhotoUrl(req.photoUrl());
+            r.setPhotoData(null);
+            r.setPhotoContentType(null);
+        }
         return buildDetail(recipeRepository.save(r), userId);
+    }
+
+    @Transactional
+    public RecipeDetailResponse uploadPhoto(Long recipeId, Long userId, MultipartFile file) {
+        Recipe r = findOwned(recipeId, userId);
+        String contentType = file.getContentType();
+        if (file.isEmpty() || contentType == null || !contentType.startsWith("image/")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "File must be a non-empty image");
+        }
+        try {
+            r.setPhotoData(file.getBytes());
+        } catch (IOException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Could not read uploaded file");
+        }
+        r.setPhotoContentType(contentType);
+        // An uploaded file replaces any previously set external URL.
+        r.setPhotoUrl(null);
+        return buildDetail(recipeRepository.save(r), userId);
+    }
+
+    public record RecipePhoto(byte[] data, String contentType) {}
+
+    @Transactional(readOnly = true)
+    public RecipePhoto getPhoto(Long recipeId) {
+        Recipe r = recipeRepository.findById(recipeId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Recipe not found"));
+        if (r.getPhotoData() == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No photo uploaded for this recipe");
+        }
+        return new RecipePhoto(r.getPhotoData(), r.getPhotoContentType());
     }
 
     @Transactional

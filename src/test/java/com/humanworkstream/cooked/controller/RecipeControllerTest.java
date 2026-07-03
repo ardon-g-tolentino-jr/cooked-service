@@ -45,14 +45,14 @@ class RecipeControllerTest {
 
     private RecipeSummaryResponse stubSummary(long id) {
         return new RecipeSummaryResponse(id, "Chicken Adobo", 1L, null,
-                "Filipino", 15, 4, false, false, List.of("comfort"), OffsetDateTime.now(), null);
+                "Filipino", 15, 4, false, false, List.of("comfort"), OffsetDateTime.now(), null, false);
     }
 
     private RecipeDetailResponse stubDetail(long id) {
         return new RecipeDetailResponse(id, "Chicken Adobo", 1L, null,
                 "Filipino", 15, 4, false, false,
                 List.of("comfort"), Collections.emptyList(), Collections.emptyList(),
-                OffsetDateTime.now(), null, 0L, null, null);
+                OffsetDateTime.now(), null, 0L, null, null, false);
     }
 
     @Test
