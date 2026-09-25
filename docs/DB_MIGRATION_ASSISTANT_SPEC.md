@@ -3,17 +3,26 @@
 | | |
 |---|---|
 | **Working name** | `dbmig` (DB Migration Assistant) |
-| **Status** | Draft v0.1, for review |
-| **Date** | 2026-09-24 |
+| **Status** | Draft v0.2, for review |
+| **Date** | 2026-09-25 |
+| **Databases compared** | MySQL, PostgreSQL and Oracle, all commonly used versions (§7.3.1), in any direction |
+| **Comparison inputs** | Each side is a **live connection** or a **loaded DDL script** |
 | **Stack** | Java 17 · Spring Boot 3.3.x · PostgreSQL (app DB) · React 18 · TypeScript · Vite |
-| **Proposed repos** | `dbmig-service` (backend) and `dbmig-web` (frontend) |
-| **Hosting** | Hostinger VPS · Coolify · Nixpacks (same as Cooked) |
+| **Packaging** | Standalone: one repo (`dbmig`), one Docker image (backend + UI) plus its own PostgreSQL |
+| **Hosting** | Anywhere Docker runs: Coolify on the Hostinger VPS, or on-premises next to the databases |
 
-> This document is kept in `cooked-service` only as a design spec. dbmig is a **separate
-> application**. It reuses the house conventions from this repo's `CLAUDE.md`: the package
-> layout, stateless JWT security, PostgreSQL enum handling, `db/setup.sql` as the canonical
-> schema, and inline-style React built on the `src/components/ui/` primitives. It is built,
-> tested and deployed the same way.
+> This document is kept in `cooked-service` only as a design spec. dbmig is a **standalone
+> application** with no runtime dependency on Cooked or any other service. It reuses the house
+> conventions from this repo's `CLAUDE.md`: the package layout, stateless JWT security,
+> PostgreSQL enum handling, `db/setup.sql` as the canonical schema, and inline-style React built
+> on the `src/components/ui/` primitives.
+
+**Revision history**
+
+| Version | Date | Changes |
+|---|---|---|
+| 0.1 | 2026-09-24 | First draft |
+| 0.2 | 2026-09-25 | Scope fixed to MySQL, PostgreSQL and Oracle (all versions) in the first release; SQL Server and MariaDB removed. Standalone packaging (single image, `/api` prefix). **DDL snapshots**: either side of a schema comparison can be an uploaded DDL script (§5.4, §7.4). Fix scripts and target health checks for all three dialects. Quick compare. |
 
 ## Contents
 
@@ -46,8 +55,9 @@
 
 ### 1.1 Problem
 
-Database migrations (version upgrades, re-platforming such as Oracle/MySQL/SQL Server to
-PostgreSQL, cloud moves, consolidations) tend to fail in the same few ways:
+Database migrations (version upgrades such as Oracle 11g → 19c or MySQL 5.7 → 8.4,
+re-platforming between Oracle, MySQL and PostgreSQL, cloud moves, consolidations) tend to fail
+in the same few ways:
 
 - a step gets skipped
 - sequences are not reset
@@ -65,9 +75,10 @@ A web application that gives a migration team one place to:
 1. **Run the migration from a checklist.** Standard migration activities are grouped by phase,
    each with owners, due dates, evidence, dependencies, gates and sign-offs. Items that a
    comparison can prove are marked done by the system.
-2. **Compare source and target.** Schema (DDL) comparison works across database dialects. Data
-   comparison ranges from row counts up to full row-by-row diffing. Differences the team accepts
-   can be waived.
+2. **Compare source and target.** Set up two connections, or load a DDL script for either side,
+   and compare. Schema (DDL) comparison works within and across MySQL, PostgreSQL and Oracle.
+   Data comparison between two live connections ranges from row counts up to full row-by-row
+   diffing. Differences the team accepts can be waived.
 3. **Prove it with reports.** Reports are immutable, downloadable snapshots (PDF, Excel, CSV,
    JSON, HTML) covering checklist status, schema differences, data validation, go/no-go
    readiness and final sign-off.
@@ -76,6 +87,8 @@ A web application that gives a migration team one place to:
 
 - **Read-only against the migrated databases.** dbmig never writes to a source or target
   database. It generates fix scripts, and people decide whether to run them.
+- **Uploaded DDL is parsed, never executed.** A DDL script is read into the same model that a
+  live database produces, so both kinds of input compare the same way.
 - **Evidence over assertion.** If a comparison can verify a checklist item, the comparison sets
   it, and the latest result always wins.
 - **Bounded resources.** Every comparison streams its data, so memory does not grow with table
@@ -85,12 +98,18 @@ A web application that gives a migration team one place to:
 
 ### 1.4 Assumptions
 
-- The target is usually PostgreSQL and sources vary. Fix-script generation targets PostgreSQL
-  first.
-- One organization (Human Workstream and its client projects) with access control per project.
-  It is not multi-tenant SaaS in v1.
-- The dbmig backend can reach the source and target databases over the network (see §16.3).
-- Projects have 2 to 20 people, and there are tens of projects, not thousands.
+- **Databases:** MySQL, PostgreSQL and Oracle, as source or target in any combination,
+  including same-dialect upgrades. Supported versions are listed in §7.3.1.
+- **Standalone:** dbmig is installed as one self-contained application. It does not depend on
+  Cooked, subscription-service or any external service at runtime.
+- **Two ways to supply each side:** a live connection, or a DDL script (for example a
+  `pg_dump --schema-only`, `mysqldump --no-data` or Oracle `DBMS_METADATA` export, or a set of
+  migration scripts).
+- One installation serves one organization with access control per project. It is not
+  multi-tenant SaaS.
+- dbmig is installed where it can reach the live databases it compares (see §16.3). DDL-only
+  comparisons need no database access at all.
+- Projects have 1 to 20 people, and there are tens of projects, not thousands.
 
 ---
 
@@ -105,6 +124,7 @@ A web application that gives a migration team one place to:
 | G3 | Detect data differences with the level of rigor each table needs: count, profile or full compare. |
 | G4 | Produce audit-ready reports and a clear go/no-go verdict for cutover. |
 | G5 | Keep the load on production databases low and predictable. |
+| G6 | Compare against a DDL script when a live database is not available, or check a script set against a live database. |
 
 ### Non-goals
 
@@ -113,7 +133,10 @@ A web application that gives a migration team one place to:
 - **Running DDL or DML on source or target**, including the fix scripts dbmig generates.
 - **Being a SQL IDE** or general query console.
 - **Translating stored procedures between dialects.** Routines are compared, not converted.
-- **Multi-tenant billing.** This could be added later through subscription-service (see §19).
+- **Executing uploaded DDL.** In the first release DDL is only parsed (a sandbox option is in P2,
+  FR-DDL-9).
+- **Other databases.** SQL Server, MariaDB, DB2 and others are out of scope.
+- **Integration with Cooked or subscription-service.** dbmig is standalone.
 
 ---
 
@@ -144,6 +167,8 @@ A web application that gives a migration team one place to:
 | Edit project settings and members | ✔ | ✔ | | |
 | Create, edit and delete connections | ✔ | ✔ | | |
 | Test a saved connection, browse its schemas | ✔ | ✔ | ✔ | |
+| Upload DDL, capture a DDL snapshot from a connection | ✔ | ✔ | ✔ | |
+| Delete a DDL snapshot | ✔ | ✔ | | |
 | Create and edit comparison profiles | ✔ | ✔ | ✔ | |
 | Launch and cancel runs, download fix scripts | ✔ | ✔ | ✔ | |
 | Update checklist items (status, owner, due date, evidence) | ✔ | ✔ | ✔ | |
@@ -168,14 +193,16 @@ who is not a member gets **404, not 403**, so the API does not reveal which proj
 | Term | Meaning |
 |---|---|
 | **Project** | One migration effort, for example "ERP Oracle 19c → PostgreSQL 16". It owns connections, checklist, profiles, runs, waivers and reports. |
-| **Connection** | Endpoint and credentials for one database. It has a side (`SOURCE`/`TARGET`) and an environment label such as PROD, UAT or REHEARSAL. |
+| **Connection** | Endpoint and credentials for one live MySQL, PostgreSQL or Oracle database. It has a side (`SOURCE`/`TARGET`) and an environment label such as PROD, UAT or REHEARSAL. |
+| **DDL snapshot** | An immutable schema taken from uploaded DDL files, or captured from a live connection. It holds the original files, the parsed canonical model and a parse report. |
+| **Comparison side** | What a run compares on each side: a connection or a DDL snapshot. Schema runs accept either on both sides. Data and health runs need live connections. |
 | **Checklist template** | An admin-maintained list of standard activities. It is copied into a project when the project is created. |
 | **Checklist item** | A project's own copy of an activity, with status, owner, due date, evidence, comments and dependencies. |
 | **Phase** | One of eight ordered stages: Discovery, Planning, Preparation, Schema, Data, Validation, Cutover, Post-migration. |
 | **Gate** | An item that must be `DONE` and signed off by a LEAD before its phase counts as complete. |
 | **Auto-check** | An item bound to a check (for example `ROW_COUNTS_MATCH`). The system sets its status from the latest relevant run. |
 | **Comparison profile** | Saved comparison settings: scope, name mappings, type mappings, ignore rules, severity overrides and data options. |
-| **Run** | One asynchronous execution of a `SCHEMA`, `DATA` or `TARGET_HEALTH` comparison. A run has a *status* (did it execute?) and an *outcome* (`PASS` / `WARN` / `FAIL`). |
+| **Run** | One asynchronous execution of a `SCHEMA`, `DATA` or `TARGET_HEALTH` comparison between two sides. A run has a *status* (did it execute?) and an *outcome* (`PASS` / `WARN` / `FAIL`). |
 | **Diff** | One schema difference found by a run. |
 | **Fingerprint** | A stable hash that identifies "the same difference" across runs. Waivers carry forward by fingerprint. |
 | **Waiver** | An accepted difference, with reason, author, optional expiry and, for data, an optional mismatch tolerance. |
@@ -201,26 +228,41 @@ Priority tags: **MVP** is the first release. **P2** is phase 2.
 
 | ID | Pri | Requirement |
 |---|---|---|
-| FR-PRJ-1 | MVP | Create a project with name, description, strategy (`BIG_BANG`, `PHASED`, `TRICKLE_CDC`, `PARALLEL_RUN`), planned cutover time and checklist template (the default template is preselected). The creator becomes LEAD. Template items are **copied**, so later template edits never change existing projects. |
+| FR-PRJ-1 | MVP | Create a project with name, description, strategy (`BIG_BANG`, `PHASED`, `TRICKLE_CDC`, `PARALLEL_RUN`), planned cutover time and checklist template (the default template is preselected; "No checklist" is allowed for comparison-only projects). The creator becomes LEAD. Template items are **copied**, so later template edits never change existing projects. |
 | FR-PRJ-2 | MVP | Manage members and their project roles. The last LEAD cannot be removed (409). |
 | FR-PRJ-3 | MVP | Project list shows status, cutover date, checklist completion % and the latest go/no-go verdict. |
 | FR-PRJ-4 | MVP | Archiving makes a project read-only. Hard delete is ADMIN-only and cascades. |
 | FR-PRJ-5 | P2 | Clone a project for a repeat migration: connections (without passwords), profiles and custom checklist items. |
+| FR-PRJ-6 | MVP | **Quick compare** from the home page: choose each side as a connection (new or saved) or a DDL upload, then run a schema comparison straight away. The run is filed in the user's personal "Quick compares" project, which has no checklist, and can later be moved into a real project. |
 
 ### 5.3 Connections
 
 | ID | Pri | Requirement |
 |---|---|---|
-| FR-CON-1 | MVP | Register a connection with structured fields only: name, side, environment, dialect, host, port, database or service name, username, password, SSL mode, optional CA certificate (PEM), schemas in scope, and allow-listed driver properties. **Raw JDBC URLs are never accepted** (see §14.2). |
+| FR-CON-1 | MVP | Register a connection with structured fields only: name, side, environment, dialect, host, port, database name (Oracle: service name, or SID when `useSid` is set), username, password, SSL mode, optional CA certificate (PEM), schemas in scope, and allow-listed driver properties. **Raw JDBC URLs are never accepted** (see §14.2). |
 | FR-CON-2 | MVP | Test a connection, saved or unsaved. The test connects read-only and records server version, encoding, collation, time zone and latency. It **warns if the account has write privileges**. |
 | FR-CON-3 | MVP | The password is write-only. It is never returned by the API, and edits keep the stored password unless a new one is sent. |
 | FR-CON-4 | MVP | Browse schemas and tables of a connection, used by the pickers in profiles and runs. |
 | FR-CON-5 | MVP | One default connection per side per project, used by auto-checks and the dashboard. |
-| FR-CON-6 | MVP | Supported dialects: PostgreSQL 12+, MySQL 8.0+, MariaDB 10.6+. |
-| FR-CON-7 | P2 | Add SQL Server 2017+ and Oracle 19c+. |
+| FR-CON-6 | MVP | Supported dialects: MySQL, PostgreSQL and Oracle, in the versions listed in §7.3.1. The adapter picks version-specific catalog queries from the server version found at connect time. |
+| FR-CON-7 | P2 | Oracle TCPS with an app-managed wallet, and Oracle Kerberos/LDAP authentication. |
 | FR-CON-8 | P2 | SSH tunnel through a bastion host, and credentials held in an external secret store. |
 
-### 5.4 Checklist
+### 5.4 DDL snapshots
+
+| ID | Pri | Requirement |
+|---|---|---|
+| FR-DDL-1 | MVP | **Upload DDL** as one or more `.sql` files or a `.zip` (≤ 50 MB compressed, ≤ 200 MB uncompressed). The user gives a name, the dialect (auto-detected and confirmed by the user), an optional version (for example `19c`, `8.0`, `16`), the default schema for unqualified names, and the file order (natural sort by default, so Flyway `V1__…`, `V2__…` apply in order; can be reordered). |
+| FR-DDL-2 | MVP | Statements are split, parsed and **replayed in order** into the canonical model (§7.4). `CREATE`, `ALTER`, `DROP`, `RENAME` and `COMMENT` all apply, so a set of migration scripts produces the final schema they describe. |
+| FR-DDL-3 | MVP | Common export formats load without editing: `pg_dump --schema-only`, `mysqldump --no-data`, `SHOW CREATE TABLE` output, Oracle `DBMS_METADATA.GET_DDL`, Data Pump `impdp … SQLFILE=`, SQL Developer / Toad exports, Flyway and Liquibase SQL. Tool noise (session `SET`s, `OWNER TO`, grants, psql meta-commands, `DELIMITER`, `/` terminators, `PROMPT`, storage clauses) is recognized and skipped. |
+| FR-DDL-4 | MVP | **Parse report**: statements applied, ignored and failed, each ignored or failed statement listed with file, line and reason. Nothing is dropped silently. A run that uses a snapshot with failed statements shows a warning banner, and reports print the parse summary. |
+| FR-DDL-5 | MVP | **Capture a snapshot** from a live connection to freeze a baseline, for example the source schema before decommissioning, or the target before a release. |
+| FR-DDL-6 | MVP | Download a snapshot's original files, or its schema regenerated as normalized DDL in its own dialect. |
+| FR-DDL-7 | MVP | Snapshots are immutable. Uploading again creates a new snapshot. Deleting one keeps the runs that used it, which retain its name and hash. |
+| FR-DDL-8 | MVP | Allowed pairs for `SCHEMA` runs: connection ↔ connection, connection ↔ DDL, DDL ↔ connection and DDL ↔ DDL. `DATA` runs need two connections, and `TARGET_HEALTH` runs need a target connection (enforced in the API and by DB `CHECK` constraints). |
+| FR-DDL-9 | P2 | **Sandbox mode**, for full fidelity on PL/SQL-heavy scripts: run the DDL in a registered, disposable scratch database of the same dialect and version, extract its catalog, then drop the scratch schema. It only ever uses connections flagged `scratch`, never a source or target. |
+
+### 5.5 Checklist
 
 | ID | Pri | Requirement |
 |---|---|---|
@@ -252,56 +294,56 @@ Priority tags: **MVP** is the first release. **P2** is phase 2.
 | BR-9 | When the project setting `enforce_phase_gates` is on, items in phase *N* cannot move to `IN_PROGRESS` or `DONE` until every gate in phase *N−1* is signed off. It is off by default; the UI shows a warning instead. |
 | BR-10 | Every change to an item writes an `audit_log` row with before and after values. |
 
-### 5.5 Schema (DDL) comparison
+### 5.6 Schema (DDL) comparison
 
 | ID | Pri | Requirement |
 |---|---|---|
-| FR-SCH-1 | MVP | Launch a schema run with a source connection, a target connection and a profile (saved or ad hoc). The run is asynchronous, with progress and cancel. |
-| FR-SCH-2 | MVP | Object types compared: schema, table, column, primary key, foreign key, unique constraint, check constraint, index, view, sequence/identity, function, procedure, trigger. |
-| FR-SCH-3 | P2 | Additional object types: materialized views, user-defined and enum types, partitions, grants, comments. |
+| FR-SCH-1 | MVP | Launch a schema run with a source side, a target side and a profile (saved or ad hoc). Each side is a connection or a DDL snapshot (FR-DDL-8). The run is asynchronous, with progress and cancel. |
+| FR-SCH-2 | MVP | Object types compared: schema, table, column, primary key, foreign key, unique constraint, check constraint, index, view, sequence/identity, function, procedure, trigger, and for Oracle also packages (spec and body) and synonyms. |
+| FR-SCH-3 | P2 | Additional object types: materialized views, user-defined and enum types, partitions, grants, MySQL events, Oracle DB links. |
 | FR-SCH-4 | MVP | Name matching is case-insensitive by default. Profiles can add schema, table and column rename maps and include/exclude glob patterns. |
 | FR-SCH-5 | MVP | Constraints and indexes are **matched by structure** (table, columns, kind), not by name. A name difference alone is `INFO`. System-generated names such as Oracle `SYS_C00123` or MySQL `fk_1` never cause false alarms. |
-| FR-SCH-6 | MVP | Column types are compared through canonical types plus mapping rules (§7.5). |
-| FR-SCH-7 | MVP | Each difference is classified as `MISSING_IN_TARGET`, `EXTRA_IN_TARGET` or `CHANGED`, with severity `ERROR`, `WARNING` or `INFO` (§7.6). Profiles can override severities. |
+| FR-SCH-6 | MVP | Column types are compared through canonical types plus mapping rules (§7.6). |
+| FR-SCH-7 | MVP | Each difference is classified as `MISSING_IN_TARGET`, `EXTRA_IN_TARGET` or `CHANGED`, with severity `ERROR`, `WARNING` or `INFO` (§7.7). Profiles can override severities. |
 | FR-SCH-8 | MVP | Diff viewer: object tree with counts, filters, attribute-level diff table, and side-by-side DDL with changed lines highlighted. |
 | FR-SCH-9 | MVP | Waive a difference with a reason and optional expiry. The waiver applies to the same fingerprint in later runs. |
-| FR-SCH-10 | MVP | Download a suggested fix script for a PostgreSQL target (§7.8). |
+| FR-SCH-10 | MVP | Download a suggested fix script in the target's dialect: MySQL, PostgreSQL or Oracle (§7.9). When the target is a DDL snapshot, the script uses the snapshot's dialect and version. |
 | FR-SCH-11 | MVP | Object inventory in every run summary: counts per object type for each side (supports checklist item DISC-03). |
-| FR-SCH-12 | P2 | Run-to-run comparison ("what changed since the last run") and fix scripts for MySQL, SQL Server and Oracle targets. |
+| FR-SCH-12 | P2 | Run-to-run comparison ("what changed since the last run"). |
 
-### 5.6 Data comparison
+### 5.7 Data comparison
 
 | ID | Pri | Requirement |
 |---|---|---|
-| FR-DAT-1 | MVP | Launch a data run with method `ROW_COUNT`, `PROFILE` or `FULL` (§7.9). Tables are either all matched tables or an explicit list, with per-table overrides. |
+| FR-DAT-1 | MVP | Launch a data run between **two live connections** with method `ROW_COUNT`, `PROFILE` or `FULL` (§7.10). Tables are either all matched tables or an explicit list, with per-table overrides. |
 | FR-DAT-2 | MVP | Tables are paired using the profile's name mapping. A table found on only one side is reported as `SKIPPED` with the reason. |
 | FR-DAT-3 | MVP | Key detection order: primary key, then a unique index on NOT NULL columns, then user-specified key columns. Without a key, `FULL` is skipped and the table falls back to `ROW_COUNT` + `PROFILE`. |
-| FR-DAT-4 | MVP | Columns are paired by mapped name, excluded columns are dropped, and values are normalized according to their type (§7.11). |
+| FR-DAT-4 | MVP | Columns are paired by mapped name, excluded columns are dropped, and values are normalized according to their type (§7.12). |
 | FR-DAT-5 | MVP | Structured row filters (column, operator, value) use bind parameters. The same predicate is applied to both sides using mapped column names. |
 | FR-DAT-6 | MVP | Per-table results: row counts per side, matched, missing, extra, value diffs, duplicate keys, status and duration. Mismatch samples are stored up to a cap (default 100 per table) and masked (§14.4). |
 | FR-DAT-7 | MVP | Mismatch drill-down grid with differing columns highlighted, CSV export, and a **lookup SQL** button that generates the `SELECT` statements to fetch the mismatched keys from each side. |
-| FR-DAT-8 | MVP | Safety controls: read-only sessions, statement timeout, parallelism cap, fetch size, and an optional rows-per-second throttle (§7.15). |
+| FR-DAT-8 | MVP | Safety controls: read-only sessions, statement timeout, parallelism cap, fetch size, and an optional rows-per-second throttle (§7.16). |
 | FR-DAT-9 | MVP | Table-level waivers with an optional tolerance ("accept up to 200 mismatches"). |
 | FR-DAT-10 | P2 | `SAMPLE` method, in-database hash pushdown for same-dialect pairs, hash-partition fallback, multiset compare for keyless tables, mismatch recheck, resumable runs, scheduled runs with trend charts. |
 
-### 5.7 Target health checks
+### 5.8 Target health checks
 
 | ID | Pri | Requirement |
 |---|---|---|
-| FR-HLT-1 | MVP | For a PostgreSQL target, a `TARGET_HEALTH` run checks: sequences aligned, foreign key integrity, indexes valid, statistics fresh, triggers enabled (§7.14). |
-| FR-HLT-2 | P2 | The same checks for MySQL, SQL Server and Oracle targets. |
+| FR-HLT-1 | MVP | For a live MySQL, PostgreSQL or Oracle target, a `TARGET_HEALTH` run checks: sequences/auto-increment aligned, foreign key integrity, indexes valid, statistics fresh, triggers enabled, and (Oracle) no invalid objects (§7.15). A check that does not exist on a dialect is reported `NOT_APPLICABLE`, never as a pass. |
+| FR-HLT-2 | P2 | User-defined health checks: a named read-only `SELECT` that must return zero rows, run with the same safety controls. |
 
-### 5.8 Reports
+### 5.9 Reports
 
 | ID | Pri | Requirement |
 |---|---|---|
 | FR-RPT-1 | MVP | Generate the report types in §8 in the formats listed in the §8 matrix. |
 | FR-RPT-2 | MVP | Generation is asynchronous. Each report is stored as an immutable snapshot with its SHA-256, and can be listed, previewed and downloaded. |
-| FR-RPT-3 | MVP | Every report carries a header with project, generated by/at, source and target labels with server versions, run IDs and a config summary. The footer shows the report ID and page *n*/*N*. The app shows the file's SHA-256 so anyone can verify a copy. |
+| FR-RPT-3 | MVP | Every report carries a header with project, generated by/at, both sides (a connection with its server version, or a DDL snapshot with dialect, version, file names and SHA-256), run IDs and a config summary. The footer shows the report ID and page *n*/*N*. The app shows the file's SHA-256 so anyone can verify a copy. |
 | FR-RPT-4 | MVP | One click attaches a report as evidence to a checklist item, such as SCH-10 or CUT-01. |
 | FR-RPT-5 | P2 | Scheduled reports by email, and custom branding (logo, company name). |
 
-### 5.9 Dashboard and readiness
+### 5.10 Dashboard and readiness
 
 | ID | Pri | Requirement |
 |---|---|---|
@@ -313,18 +355,21 @@ Go/no-go criteria:
 
 1. Every gate item in phases Discovery through Validation is `DONE` and signed off.
 2. No item in phases Discovery through Validation is `BLOCKED`.
-3. The latest schema run on the default connections (no older than 7 days) has no unwaived `ERROR`.
+3. The latest schema run whose target is the default target connection (no older than 7 days)
+   has no unwaived `ERROR`. Its source side may be the default source connection or a DDL
+   snapshot. A run against a *target* DDL snapshot does not count, because it does not prove
+   what is actually deployed.
 4. The latest data run on the default connections has every in-scope table `MATCH` or waived.
 5. The latest target health run passes, or its failures are waived.
 6. Both default connections tested OK within the last 24 hours.
 
-### 5.10 Audit log
+### 5.11 Audit log
 
 | ID | Pri | Requirement |
 |---|---|---|
 | FR-AUD-1 | MVP | An append-only audit log records every mutation, run event, report event, waiver, sign-off and override. It is viewable per project by LEAD and ADMIN and can be exported as CSV. |
 
-### 5.11 Notifications (P2)
+### 5.12 Notifications (P2)
 
 Email and optional Slack webhook for: run finished or failed, item assigned to me, gate regressed
 after sign-off (BR-6), waiver expiring, cutover in 24 hours.
@@ -337,7 +382,7 @@ The seeded template **"Standard database migration"** contains the items below. 
 it into specialized templates, for example "Oracle → PostgreSQL", "MySQL major upgrade" or
 "Cloud lift-and-shift". Codes are stable so reports stay comparable across projects.
 
-Legend: **⛩** = gate item. **Auto** = auto-check type (§7.14 and BR-6). **Evidence** = what the
+Legend: **⛩** = gate item. **Auto** = auto-check type (§7.15 and BR-6). **Evidence** = what the
 item's evidence should normally be.
 
 ### Phase 1: Discovery and assessment (`DISCOVERY`)
@@ -389,13 +434,13 @@ item's evidence should normally be.
 
 | Code | Activity | ⛩ | Auto | Evidence |
 |---|---|:-:|---|---|
-| SCH-01 | Extract source DDL and put it under version control | | | Repo link |
-| SCH-02 | Convert DDL to the target dialect and review conversion warnings | | | Conversion log |
+| SCH-01 | Extract source DDL and put it under version control | | | DDL snapshot (captured) + repo link |
+| SCH-02 | Convert DDL to the target dialect and review conversion warnings; compare the source database against the converted DDL before creating the target | | | Schema run: source connection ↔ converted-DDL snapshot |
 | SCH-03 | Create schemas, user types, sequences/identity columns and tables | | | Script / log |
 | SCH-04 | Create primary keys, unique constraints and check constraints | | | Script / log |
 | SCH-05 | Defer secondary indexes, foreign keys and triggers until after the bulk load | | | Runbook step |
 | SCH-06 | Migrate views and materialized views | | | Script / log |
-| SCH-07 | Migrate functions, procedures and triggers, and unit-test the converted logic | | | Test results |
+| SCH-07 | Migrate functions, procedures and triggers, recompile, and unit-test the converted logic | | `OBJECTS_VALID` (Oracle target) | Test results + health run |
 | SCH-08 | Install required target extensions (for example pgcrypto, uuid-ossp, PostGIS) | | | Script / log |
 | SCH-09 | Schema comparison has no unwaived `ERROR` differences | ⛩ | `SCHEMA_CLEAN` | Schema run |
 | SCH-10 | Review and sign off the schema comparison report | ⛩ | | Schema report |
@@ -461,7 +506,9 @@ item's evidence should normally be.
 | POST-08 | Generate the final migration report and obtain sign-off | ⛩ | | Final report |
 | POST-09 | Decommission or archive the source according to the retention policy | | | Change ticket |
 
-The template has **81 items: 22 gates and 13 auto-checks**. Its seed file
+The template has **81 items: 22 gates and 14 auto-checks**. An auto-check whose check does not
+exist on the target's dialect (for example `OBJECTS_VALID` on PostgreSQL) stays a manual item.
+Its seed file
 (`db/seed.sql`, `INSERT … ON CONFLICT (template_id, code) DO NOTHING`) is generated from this
 table.
 
@@ -476,8 +523,10 @@ be unit-tested against in-memory fixtures and run by the job workers.
 
 ```mermaid
 flowchart LR
-  A["Open read-only sessions<br/>source + target"] --> B["Extract catalogs<br/>(dialect adapters)"]
-  B --> C["Canonicalize<br/>names + types"]
+  A{"Each side"} -- connection --> B1["Read-only session<br/>extract catalog"]
+  A -- "DDL snapshot" --> B2["Load stored catalog<br/>(parsed at upload, §7.4)"]
+  B1 --> C["Canonicalize<br/>names + types"]
+  B2 --> C
   C --> D["Match objects<br/>(maps, rules, structure)"]
   D --> E{"Run kind"}
   E -- SCHEMA --> F["Diff attributes<br/>classify + severity"]
@@ -491,7 +540,9 @@ flowchart LR
 
 ### 7.2 Canonical metadata model
 
-Each dialect adapter extracts into one vendor-neutral model (Java records):
+Each dialect adapter extracts into one vendor-neutral model (Java records). The DDL loader
+(§7.4) produces exactly the same records, so a live database and a DDL script are
+interchangeable from here on.
 
 ```java
 record DbCatalog(ServerInfo server, List<SchemaDef> schemas) {}
@@ -513,8 +564,16 @@ record ForeignKeyDef(String name, List<String> columns, String refSchema, String
 ```
 
 Every definition also keeps its **native DDL text** (from `pg_get_*def`, `SHOW CREATE TABLE`,
-`sys.sql_modules`, `DBMS_METADATA`, or synthesized when privileges are missing) for the
+`DBMS_METADATA`, the uploaded statement, or synthesized when privileges are missing) for the
 side-by-side view.
+
+Mapping rules:
+
+- **Schema** means a PostgreSQL schema, a MySQL database, or an Oracle user (owner).
+- Oracle stores `NOT NULL` as system-named check constraints (`"COL" IS NOT NULL`). These are
+  folded into `ColumnDef.nullable` and never reported as check constraints.
+- Oracle packages are `RoutineDef`s of kind `PACKAGE` and `PACKAGE_BODY`. Synonyms are a
+  separate `SynonymDef`.
 
 ### 7.3 Dialect adapters
 
@@ -535,7 +594,7 @@ public interface DialectAdapter {
     CanonicalType canonicalType(NativeType t);
 
     String quote(String identifier);
-    String orderByKey(List<ColumnDef> keyColumns);            // binary-collation ordering (§7.12)
+    String orderByKey(List<ColumnDef> keyColumns);            // binary-collation ordering (§7.13)
     int streamingFetchSize();
 }
 ```
@@ -545,15 +604,127 @@ per table, so thousands of tables extract in seconds.
 
 | Dialect | Catalog sources | DDL text |
 |---|---|---|
-| PostgreSQL | `pg_class`, `pg_attribute`, `pg_constraint`, `pg_index`, `pg_sequence`, `pg_trigger`, `pg_proc`, `pg_type`/`pg_enum`, `pg_depend` | `pg_get_indexdef`, `pg_get_constraintdef`, `pg_get_viewdef`, `pg_get_functiondef`, `pg_get_triggerdef`; tables synthesized |
-| MySQL / MariaDB | `information_schema.TABLES`, `COLUMNS`, `STATISTICS`, `TABLE_CONSTRAINTS`, `KEY_COLUMN_USAGE`, `REFERENTIAL_CONSTRAINTS`, `CHECK_CONSTRAINTS` (8.0.16+), `VIEWS`, `ROUTINES`, `TRIGGERS` | `SHOW CREATE TABLE/VIEW/PROCEDURE/FUNCTION/TRIGGER` |
-| SQL Server (P2) | `sys.tables`, `sys.columns`, `sys.types`, `sys.indexes`, `sys.index_columns`, `sys.foreign_keys`, `sys.check_constraints`, `sys.default_constraints`, `sys.identity_columns`, `sys.sequences`, `sys.triggers` | `sys.sql_modules`; tables synthesized |
-| Oracle (P2) | `ALL_TABLES`, `ALL_TAB_COLUMNS`, `ALL_CONSTRAINTS`, `ALL_CONS_COLUMNS`, `ALL_INDEXES`, `ALL_IND_COLUMNS`, `ALL_VIEWS`, `ALL_SEQUENCES`, `ALL_TRIGGERS`, `ALL_PROCEDURES`, `ALL_SOURCE`, `ALL_TYPES` | `DBMS_METADATA.GET_DDL` if privileged, otherwise synthesized |
+| PostgreSQL | `pg_class`, `pg_attribute`, `pg_constraint`, `pg_index`, `pg_sequence` (10+), `pg_trigger`, `pg_proc`, `pg_type`/`pg_enum`, `pg_depend` | `pg_get_indexdef`, `pg_get_constraintdef`, `pg_get_viewdef`, `pg_get_functiondef`, `pg_get_triggerdef`; tables synthesized |
+| MySQL | `information_schema.TABLES`, `COLUMNS`, `STATISTICS`, `TABLE_CONSTRAINTS`, `KEY_COLUMN_USAGE`, `REFERENTIAL_CONSTRAINTS`, `CHECK_CONSTRAINTS` (8.0.16+), `VIEWS`, `ROUTINES`, `TRIGGERS` | `SHOW CREATE TABLE/VIEW/PROCEDURE/FUNCTION/TRIGGER` |
+| Oracle | `ALL_TABLES`, `ALL_TAB_COLUMNS`, `ALL_TAB_IDENTITY_COLS` (12c+), `ALL_CONSTRAINTS`, `ALL_CONS_COLUMNS`, `ALL_INDEXES`, `ALL_IND_COLUMNS`, `ALL_IND_EXPRESSIONS`, `ALL_VIEWS`, `ALL_SEQUENCES`, `ALL_SYNONYMS`, `ALL_TRIGGERS`, `ALL_PROCEDURES`, `ALL_SOURCE`, `ALL_TYPES`, `ALL_OBJECTS` | `DBMS_METADATA.GET_DDL` if privileged, otherwise synthesized |
 
-`DdlRenderer` is a separate interface for fix-script output. The MVP ships only
-`PostgresDdlRenderer`.
+`DdlRenderer` is a separate interface that writes DDL for fix scripts (§7.9) and regenerates
+snapshots (FR-DDL-6). The MVP ships `PostgresDdlRenderer`, `MySqlDdlRenderer` and
+`OracleDdlRenderer`. All three are version-aware: an Oracle 11g target gets a sequence and
+trigger instead of an identity column, and a MySQL 5.7 target gets no functional indexes.
 
-### 7.4 Object matching
+#### 7.3.1 Supported versions
+
+| Dialect | Supported | Tested in CI | Version-specific handling |
+|---|---|---|---|
+| PostgreSQL | 9.6 – 17, and later releases once tested | 9.6, 12, 14, 16, 17 (`postgres:*`) | **< 10:** no `pg_sequence`, identity columns or declarative partitions (sequence settings are read from the sequence relation). **10+:** identity columns. **11+:** `prokind` and procedures. **12+:** generated columns. **15+:** `UNIQUE NULLS NOT DISTINCT`. |
+| MySQL | 5.7 – 9.x (5.6 best effort) | 5.7, 8.0, 8.4, 9.x (`mysql:*`) | **5.7:** `CHECK` is parsed but not stored or enforced, `utf8` means `utf8mb3`, generated columns and `JSON` exist. **8.0:** data-dictionary `information_schema`, descending and invisible indexes, functional indexes and expression defaults (8.0.13+), stored `CHECK` (8.0.16+), invisible columns (8.0.23+). **8.0+:** the adapter sets `information_schema_stats_expiry = 0` in its session so `AUTO_INCREMENT` and row statistics are current. |
+| Oracle | 11g R2 (11.2.0.4) – 23ai | 11g XE, 18c XE, 21c XE (`gvenzl/oracle-xe`), 23ai Free (`gvenzl/oracle-free`); 12c and 19c from Oracle Container Registry Enterprise images in a nightly job (license acceptance required) | **11g:** no identity columns (sequence + trigger), identifiers ≤ 30 bytes, no `DEFAULT seq.NEXTVAL`. **12c R1:** identity columns, `DEFAULT seq.NEXTVAL`, `DEFAULT ON NULL`, invisible columns, `MAX_STRING_SIZE=EXTENDED` (VARCHAR2 up to 32,767 bytes). **12.2+:** identifiers ≤ 128 bytes. **21c:** native `JSON`. **23ai:** native `BOOLEAN`, `IF [NOT] EXISTS` in DDL; `VECTOR` compared as OTHER. `DATA_DEFAULT` and `SEARCH_CONDITION` are `LONG` columns and are read with dedicated handling. |
+
+Older versions may connect but are unsupported. The service ships one JDBC driver per dialect:
+pgJDBC 42.7.x, MySQL Connector/J and Oracle JDBC (`ojdbc`). The driver versions are chosen so
+their published compatibility covers the whole supported range; check this again at every
+release. If no single Oracle driver certifies both 11.2 and 23ai, the Oracle adapter loads a
+second driver in an isolated class loader, selected by server version.
+
+### 7.4 DDL snapshots: loading and replay
+
+A DDL snapshot goes through the same canonical model as a live database, so every later step
+(matching, diffing, fix scripts, reports) treats both kinds of input the same way. **Uploaded
+DDL is never executed.**
+
+```mermaid
+flowchart LR
+  U["Upload<br/>.sql files or .zip"] --> D["Decode<br/>BOM + charset"]
+  D --> S["Split statements<br/>(dialect-aware)"]
+  S --> C["Classify<br/>apply / ignore / fail"]
+  C --> P["Parse<br/>(JSqlParser 5.x)"]
+  P --> R["Replay in order<br/>into DbCatalog"]
+  R --> N["Normalize names,<br/>types, expressions"]
+  N --> O[("Store catalog<br/>+ parse report")]
+```
+
+**Splitting** is dialect-aware because statement boundaries differ:
+
+| Dialect | Boundary rules |
+|---|---|
+| PostgreSQL | `;` outside quotes, comments and dollar-quoted bodies (`$$ … $$`, `$tag$ … $tag$`). psql meta-commands (`\connect`, `\set`, …) are skipped with an INFO message. `COPY … FROM stdin` data is skipped up to its `\.` line. |
+| MySQL | `;` or the current `DELIMITER` (for example `DELIMITER //` around routines and triggers). Versioned comments `/*!50001 … */` are unwrapped when the snapshot's version is at least the comment's version, which is what MySQL itself does. |
+| Oracle | `;` ends SQL statements. PL/SQL units (`CREATE [OR REPLACE] PACKAGE [BODY] / PROCEDURE / FUNCTION / TRIGGER / TYPE BODY`, and anonymous `BEGIN`/`DECLARE` blocks) end at a line containing only `/`. SQL*Plus commands (`PROMPT`, `SET`, `REM`, `SPOOL`, `WHENEVER`, `@file`) are skipped. `&var` substitution variables produce a warning. |
+
+**Classification.** Every statement ends up in exactly one bucket, and the bucket is recorded in
+the parse report:
+
+| Bucket | Statements |
+|---|---|
+| Applied | `CREATE`, `ALTER`, `DROP`, `RENAME` and `COMMENT` on schemas/databases, tables, columns, constraints, indexes, views, materialized views, sequences, synonyms, types, functions, procedures, packages and triggers |
+| Applied as context | `SET search_path`, MySQL `USE db`, Oracle `ALTER SESSION SET CURRENT_SCHEMA`. These change the default schema for the unqualified names that follow. |
+| Ignored (INFO) | Other session settings, `GRANT`/`REVOKE`, `OWNER TO`, `SELECT pg_catalog.set_config(…)`, `LOCK`/`UNLOCK TABLES`, statistics calls. Physical clauses such as `TABLESPACE`, `STORAGE (…)`, `PCTFREE`, `SEGMENT CREATION`, `ENGINE=`, `ROW_FORMAT=` and the `AUTO_INCREMENT=` table option are kept as metadata but not compared. |
+| Ignored (WARNING) | DML (`INSERT`, `UPDATE`, `DELETE`, `COPY` data). Data in a DDL file is not loaded. |
+| Failed (ERROR) | Statements the parser rejects, and statements that refer to an object that does not exist at that point in the replay (for example `ALTER TABLE` on an unknown table) |
+
+**Parsing.** JSqlParser 5.x parses tables, columns, constraints, indexes, views, sequences,
+synonyms, comments and the `ALTER` forms. For routines, packages and triggers, a small
+dialect-specific parser reads the header (name, arguments, return type, and for triggers the
+timing, event and table); the body is kept as text. Each statement is parsed with a 5 s
+timeout, so one pathological statement cannot stall a snapshot. A spike in M2 measures coverage
+on real exports from every version in §7.3.1, aiming for ≥ 99% of table-level statements parsed.
+If JSqlParser falls short for a dialect, the fallback is the ANTLR grammars from
+`antlr/grammars-v4` (PL/SQL, MySQL, PostgreSQL) behind the same `DdlParser` interface.
+
+**Replay.** Statements are applied in file order, then statement order, to an in-memory
+`DbCatalog`:
+
+- `CREATE` adds the object. `CREATE OR REPLACE` replaces it. `CREATE … IF NOT EXISTS` does
+  nothing when the object already exists.
+- `ALTER` changes the object, `DROP` removes it, and `RENAME` renames it while keeping its
+  dependent objects attached.
+- `COMMENT ON` sets comments.
+
+This matters because exports split definitions up. For example, `pg_dump` creates a table
+first, then later adds its primary key, defaults and sequence ownership with
+`ALTER TABLE … ADD CONSTRAINT`, `ALTER … SET DEFAULT nextval(…)` and
+`ALTER SEQUENCE … OWNED BY`. Replay stitches these back into one table definition, the same
+shape the live catalog would show.
+
+The snapshot's dialect and version control identifier case folding (PostgreSQL lowercases
+unquoted names, Oracle uppercases them, MySQL keeps them as written), version-specific types
+(`BOOLEAN` only on Oracle 23ai) and MySQL versioned comments.
+
+**Dialect detection.** The upload form scores signals and proposes a dialect, which the user
+confirms:
+
+- MySQL: backticks, `ENGINE=`, `AUTO_INCREMENT`
+- Oracle: `VARCHAR2`, `NUMBER(`, lines containing only `/`, `SEGMENT CREATION`
+- PostgreSQL: `$$`, `::`, `SERIAL`, `OWNER TO`, `pg_catalog`
+
+**Comparing DDL with live catalogs.** Live databases rewrite definitions. PostgreSQL adds casts
+and parentheses (`CHECK ((price > (0)::numeric))`), MySQL rewrites view SQL with backticks and
+qualified names, and Oracle stores defaults with trailing whitespace. To avoid false
+differences:
+
+- **Default and CHECK expressions** are parsed on both sides and compared as normalized syntax
+  trees, with redundant parentheses, casts of literals and identifier quoting removed. If either
+  side cannot be parsed, the texts are compared after whitespace and case normalization. A
+  difference that remains is then `INFO` ("expression differs textually; review"), not
+  `WARNING`.
+- **Bodies of views, routines, packages and triggers.** When either side is a DDL snapshot,
+  these are compared by existence and signature only, and a body text difference is `INFO`.
+  Same-dialect live-to-live runs still compare the normalized bodies (§7.5).
+- **CHECK constraints on MySQL before 8.0.16.** These versions do not keep CHECK constraints, so
+  when either side is such a version, CHECK constraints are left out of the comparison with an
+  INFO note.
+
+**Capture from a connection** (FR-DDL-5) stores the extracted `DbCatalog` directly, with
+`origin = CAPTURE` and no files. Regenerated DDL (FR-DDL-6) comes from the dialect's
+`DdlRenderer`.
+
+**Storage and processing.** The original files are stored zipped in `ddl_snapshot.content`,
+the canonical model as gzip-compressed JSON in `ddl_snapshot.catalog_gz`, and parse messages in
+`ddl_snapshot_message` (paged in the UI). Parsing runs asynchronously on the job queue (§9.3).
+A snapshot can be used once its status is `SUCCEEDED`.
+
+### 7.5 Object matching
 
 1. **Scope.** Apply include/exclude globs (for example `HR.*`, `!*.TMP_*`, `!*_BAK`).
 2. **Explicit maps.** Apply the profile's schema, table and column maps (`HR.EMP → hr.employees`).
@@ -562,36 +733,44 @@ per table, so thousands of tables extract in seconds.
 4. **Structural matching** for PKs, unique constraints, check constraints, FKs and indexes:
    match on (table, ordered columns, kind, and for FKs the referenced table and columns). Name
    is only a tiebreaker, and a name mismatch is `INFO`.
-5. **Routines** are matched by name and argument signature. Their bodies are compared
-   (whitespace and case normalized) only when both sides use the same dialect. Across dialects,
-   a routine that exists on both sides is `INFO` with the note "manual review: cross-dialect
-   body".
+5. **Routines and packages** are matched by name and argument signature. Their bodies are
+   compared (whitespace and case normalized) only when both sides are live and use the same
+   dialect. Across dialects, or when either side is a DDL snapshot, a routine that exists on
+   both sides is `INFO` with the note "manual review: body not compared".
+6. **Expressions** (defaults, CHECK conditions, index expressions, partial-index predicates)
+   are compared as normalized syntax trees where both sides parse (§7.4).
 
-### 7.5 Type mapping and compatibility
+### 7.6 Type mapping and compatibility
 
 Native types map to canonical families. The profile's `typeMappings` override the defaults
 (for example Oracle `NUMBER(1,0)` → `BOOLEAN`).
 
-| Canonical | PostgreSQL | MySQL / MariaDB | SQL Server | Oracle |
-|---|---|---|---|---|
-| BOOLEAN | `boolean` | `tinyint(1)`, `bit(1)` | `bit` | `NUMBER(1)` *(by rule)* |
-| SMALLINT | `smallint` | `tinyint`, `smallint` | `tinyint`, `smallint` | `NUMBER(p≤4,0)` |
-| INTEGER | `integer` | `mediumint`, `int` | `int` | `NUMBER(5–9,0)` |
-| BIGINT | `bigint` | `bigint` | `bigint` | `NUMBER(10–18,0)` |
-| DECIMAL(p,s) | `numeric(p,s)` | `decimal(p,s)` | `decimal`, `numeric`, `money` | `NUMBER(p,s)`; bare `NUMBER` = unbounded |
-| FLOAT / DOUBLE | `real` / `double precision` | `float` / `double` | `real` / `float` | `BINARY_FLOAT` / `BINARY_DOUBLE`, `FLOAT` |
-| CHAR(n) | `char(n)` | `char(n)` | `char`, `nchar` | `CHAR`, `NCHAR` |
-| VARCHAR(n) | `varchar(n)` | `varchar(n)` | `varchar(n)`, `nvarchar(n)` | `VARCHAR2`, `NVARCHAR2` |
-| TEXT | `text` | `text`, `mediumtext`, `longtext` | `varchar(max)`, `nvarchar(max)` | `CLOB`, `NCLOB` |
-| BINARY | `bytea` | `binary`, `varbinary`, `blob` | `binary`, `varbinary`, `image` | `RAW`, `BLOB` |
-| DATE | `date` | `date` | `date` | none (Oracle `DATE` carries time) |
-| TIME | `time` | `time` | `time` | none |
-| TIMESTAMP(p) | `timestamp` | `datetime(p)` | `datetime2`, `datetime`, `smalldatetime` | `DATE` (= p 0), `TIMESTAMP(p)` |
-| TIMESTAMPTZ(p) | `timestamptz` | `timestamp` (stored as UTC) | `datetimeoffset` | `TIMESTAMP WITH [LOCAL] TIME ZONE` |
-| UUID | `uuid` | `char(36)`, `binary(16)` *(by rule)* | `uniqueidentifier` | `RAW(16)` *(by rule)* |
-| JSON | `json`, `jsonb` | `json` | `nvarchar(max)` *(by rule)* | `JSON` (21c+), `CLOB IS JSON` *(by rule)* |
-| XML / INTERVAL / ENUM | `xml` / `interval` / enum types | none / none / `enum(...)` | `xml` / none / none | `XMLTYPE` / `INTERVAL …` / none |
-| OTHER | anything else, compared by native name | | | |
+| Canonical | PostgreSQL | MySQL | Oracle |
+|---|---|---|---|
+| BOOLEAN | `boolean` | `tinyint(1)`, `bit(1)`, `boolean` (alias) | `BOOLEAN` (23ai); `NUMBER(1)`, `CHAR(1)` Y/N *(by rule)* |
+| SMALLINT | `smallint` | `tinyint`, `smallint` | `NUMBER(p≤4,0)` |
+| INTEGER | `integer` | `mediumint`, `int` | `NUMBER(5–9,0)` |
+| BIGINT | `bigint` | `bigint`; `int unsigned` | `NUMBER(10–18,0)` |
+| DECIMAL(p,s) | `numeric(p,s)`; bare `numeric` = unbounded | `decimal(p,s)`; `bigint unsigned` = `DECIMAL(20,0)` | `NUMBER(p,s)`, `INTEGER` (= `NUMBER(38)`); bare `NUMBER` = unbounded |
+| FLOAT / DOUBLE | `real` / `double precision` | `float` / `double` | `BINARY_FLOAT` / `BINARY_DOUBLE`, `FLOAT(b)` |
+| CHAR(n) | `char(n)` | `char(n)` | `CHAR`, `NCHAR` |
+| VARCHAR(n) | `varchar(n)` | `varchar(n)` | `VARCHAR2`, `NVARCHAR2` |
+| TEXT | `text` | `tinytext`, `text`, `mediumtext`, `longtext` | `CLOB`, `NCLOB`, `LONG` |
+| BINARY | `bytea` | `binary`, `varbinary`, `tinyblob` … `longblob` | `RAW`, `BLOB`, `LONG RAW` |
+| DATE | `date` | `date` | none (Oracle `DATE` carries time) |
+| TIME | `time` | `time` | none |
+| TIMESTAMP(p) | `timestamp(p)` | `datetime(p)` | `DATE` (= p 0), `TIMESTAMP(p)` |
+| TIMESTAMPTZ(p) | `timestamptz(p)` | `timestamp(p)` (stored as UTC) | `TIMESTAMP WITH [LOCAL] TIME ZONE` |
+| UUID | `uuid` | `char(36)`, `binary(16)` *(by rule)* | `RAW(16)` *(by rule)* |
+| JSON | `json`, `jsonb` | `json` (5.7+) | `JSON` (21c+); `CLOB`/`VARCHAR2 … IS JSON` *(by rule)* |
+| XML | `xml` | none | `XMLTYPE` |
+| INTERVAL | `interval` | none | `INTERVAL DAY TO SECOND`, `INTERVAL YEAR TO MONTH` |
+| ENUM / SET | enum types | `enum(…)`, `set(…)` | none |
+| BIT(n) | `bit(n)`, `bit varying(n)` | `bit(n>1)` | none |
+| OTHER | arrays, ranges, `money`, geometric, … | `year`, spatial types | `ROWID`, `SDO_GEOMETRY`, `VECTOR`, object types |
+
+OTHER types are compared by native type name. A pair of OTHER types from different dialects is
+an `ERROR` unless a `typeMappings` rule pairs them.
 
 Compatibility rules:
 
@@ -600,12 +779,12 @@ Compatibility rules:
   `VARCHAR(50)→VARCHAR(100)`, `DECIMAL(10,2)→DECIMAL(12,2)`, `VARCHAR→TEXT`,
   `TIMESTAMP(0)→TIMESTAMP(6)`): `WARNING`, or `INFO` when the profile sets `allowWidening`.
 - **Narrowing** or a family change without a mapping rule: `ERROR`.
-- **Length semantics.** Oracle `VARCHAR2(n BYTE)` and SQL Server `varchar(n)` count bytes, while
-  PostgreSQL counts characters. When a byte-length source maps to a character-length target of
+- **Length semantics.** Oracle `VARCHAR2(n BYTE)` counts bytes (the default unless
+  `NLS_LENGTH_SEMANTICS=CHAR`), while PostgreSQL and MySQL count characters. When a byte-length source maps to a character-length target of
   the same *n*, the result is `INFO`. The reverse direction is `WARNING`, because multibyte data
   can overflow.
 
-### 7.6 Severity rules (defaults)
+### 7.7 Severity rules (defaults)
 
 | Situation | Severity |
 |---|---|
@@ -613,6 +792,7 @@ Compatibility rules:
 | Incompatible or narrowing type change | ERROR |
 | Column nullable in source but `NOT NULL` in target (load will fail) | ERROR |
 | Unique constraint in target but not in source (load may fail) | ERROR |
+| Object missing in target whose name exceeds the target's identifier limit (Oracle ≤ 12.1: 30 bytes; Oracle 12.2+: 128 bytes; PostgreSQL: 63 bytes; MySQL: 64 characters) | ERROR (cannot be created under that name) |
 | FK, unique or check constraint missing in target | WARNING |
 | Index, view, sequence, routine or trigger missing in target | WARNING |
 | Widened type, changed default, changed FK action, identity vs sequence difference | WARNING |
@@ -624,7 +804,7 @@ Profiles can override severities, for example
 `{objectType: INDEX, diffType: MISSING_IN_TARGET, severity: ERROR}`, and can ignore attributes
 entirely (column order, comments, defaults).
 
-### 7.7 Fingerprints and waivers
+### 7.8 Fingerprints and waivers
 
 `fingerprint = sha256(objectType | mappedObjectPath | diffType | sorted(attribute, source, target))`,
 computed over *target-side* names after mapping. The same underlying difference therefore gets
@@ -640,36 +820,44 @@ Waivers are applied **when results are read**. The run's stored `outcome` is the
 API also returns `effectiveOutcome`. Creating or revoking a waiver re-evaluates the affected
 auto-check items.
 
-### 7.8 Fix-script generation (PostgreSQL target, MVP)
+### 7.9 Fix-script generation
 
-For a schema run, dbmig produces `run-<id>-fix.sql`, **which it never executes**:
+For a schema run, dbmig produces `run-<id>-fix.sql` in the target's dialect and version.
+**dbmig never runs it.**
 
-- Header: run ID, connections, generated time, and "REVIEW BEFORE RUNNING".
+Rules for every dialect:
+
+- Header: run ID, both sides, generated time, and "REVIEW BEFORE RUNNING".
 - Statement order: schemas → types → sequences → tables → columns → PK/unique/check → indexes →
-  FKs → views → comments.
-- Transactional statements are wrapped in `BEGIN … COMMIT`. `CREATE INDEX CONCURRENTLY`
-  statements go in a separate trailing section because they cannot run inside a transaction.
-- New FKs use `ADD CONSTRAINT … NOT VALID` followed by a separate `VALIDATE CONSTRAINT`, so the
-  table is not held under a long lock.
-- Type changes use `ALTER COLUMN … TYPE … USING …` with the cast shown.
+  FKs → views → routines → comments.
+- Type changes show the conversion used.
 - `EXTRA_IN_TARGET` objects appear only as **commented-out** `DROP` statements.
-- Cross-dialect views, routines and triggers are emitted as `-- MANUAL:` blocks containing the
-  source DDL.
+- Cross-dialect views, routines, packages and triggers, and names longer than the target's
+  identifier limit, are emitted as `-- MANUAL:` blocks with the source DDL (and a suggested
+  shortened name).
 - Waived differences are excluded, and listed in a comment block at the end.
 
-### 7.9 Data comparison methods
+Rules per target dialect:
+
+| Target | Rules |
+|---|---|
+| PostgreSQL | DDL is transactional, so it is wrapped in `BEGIN … COMMIT`. `CREATE INDEX CONCURRENTLY` goes in a trailing section outside the transaction. New FKs use `ADD CONSTRAINT … NOT VALID`, then a separate `VALIDATE CONSTRAINT`, to avoid a long lock. Type changes use `ALTER COLUMN … TYPE … USING …`. |
+| MySQL | Each DDL statement commits implicitly, so there is no wrapper, and after a partial failure the script needs review before it is run again. All changes to one table are combined into a single `ALTER TABLE` so the table is rebuilt only once. `ALGORITHM=INPLACE, LOCK=NONE` is added where the change allows it. `MODIFY COLUMN` repeats the full column definition, as MySQL requires. |
+| Oracle | Each DDL statement commits implicitly, so there is no wrapper. New FK and check constraints use `ENABLE NOVALIDATE`, followed by `ENABLE VALIDATE`. 12c+ targets get identity columns; 11g targets get a sequence and trigger. `CREATE INDEX … ONLINE` is emitted only when the target reports Enterprise Edition. PL/SQL units end with `/`. Reducing precision or scale on a column that holds data fails in Oracle (ORA-01440), so it is emitted as a MANUAL block. |
+
+### 7.10 Data comparison methods
 
 | Method | What it does | Catches | Cost |
 |---|---|---|---|
 | `ROW_COUNT` | `SELECT COUNT(*)` per table (with filter), both sides in parallel | Lost or duplicated batches | Low. Optional `estimate` mode reads catalog statistics instead. |
 | `PROFILE` | Per column: count, null count, min, max, sum (numeric), sum of lengths (text/binary), optional count distinct | Truncation, rounding, encoding damage, time zone shifts, NULL handling | Medium: one aggregate scan per side |
-| `FULL` | Streams both sides ordered by key and merge-joins them row by row (§7.10) | Every missing, extra or changed row | High: reads every row once per side |
+| `FULL` | Streams both sides ordered by key and merge-joins them row by row (§7.11) | Every missing, extra or changed row | High: reads every row once per side |
 | `SAMPLE` (P2) | Picks N% of keys on the source and fetches the same keys from the target in batches | Statistical confidence on very large tables | Low to medium |
 
 The method can be set per table. A typical profile uses `FULL` for reference and financial
 tables, `PROFILE` for large fact tables and `ROW_COUNT` for logs.
 
-### 7.10 Streaming merge-join (`FULL`)
+### 7.11 Streaming merge-join (`FULL`)
 
 ```text
 src = stream(source, SELECT <keys>, <cols> FROM t [WHERE f] ORDER BY <binary-ordered keys>)
@@ -677,7 +865,7 @@ tgt = stream(target, same query with mapped names)
 s = src.next(); t = tgt.next(); prevS = prevT = null
 
 while s != null or t != null:
-    assertAscending(prevS, s); assertAscending(prevT, t)   // §7.12: stop if order is broken
+    assertAscending(prevS, s); assertAscending(prevT, t)   // §7.13: stop if order is broken
     c = (t == null) ? -1 : (s == null) ? +1 : compareKeys(s.key, t.key)
     if   c < 0: emit MISSING_IN_TARGET(s);            prevS = s; s = src.next()
     elif c > 0: emit EXTRA_IN_TARGET(t);              prevT = t; t = tgt.next()
@@ -690,16 +878,18 @@ while s != null or t != null:
 ```
 
 - Streams are forward-only, read-only cursors with a fetch size. PostgreSQL needs
-  `autoCommit=false` for cursor fetching. MySQL needs `useCursorFetch=true`.
+  `autoCommit=false` for cursor fetching. MySQL needs `useCursorFetch=true`. Oracle streams with
+  the statement fetch size; `LONG`/`LONG RAW` columns are read last and in column order, as the
+  driver requires, and are left out of `PROFILE` aggregates.
 - Memory per table is O(fetch size × row width) no matter how many rows the table has.
 - Only the first `maxMismatchSamples` of each mismatch type are stored. Counts are always exact.
 - Tables are processed in parallel up to `parallelism`, with one source and one target
   connection per table.
 
-### 7.11 Value normalization
+### 7.12 Value normalization
 
 Values are converted to a canonical Java form before comparison. Every rule is recorded in the
-run's `config_snapshot` and printed in reports.
+run's `effective_config` and printed in reports.
 
 | Type | Default rule | Configurable |
 |---|---|---|
@@ -707,7 +897,8 @@ run's `config_snapshot` and printed in reports.
 | Exact numeric | `BigDecimal.compareTo` (`1.50` = `1.5`) | Scale rounding |
 | Float / double | Relative tolerance 1e-9, NaN = NaN | Absolute or relative tolerance |
 | Boolean | `true/false`, `1/0`, `'Y'/'N'`, `'T'/'F'` unified when the column maps to BOOLEAN | Custom true/false literals |
-| Timestamp without time zone | Compared as local date-time, truncated to the lower precision of the two sides (e.g. MySQL `DATETIME` = seconds, PostgreSQL = µs, SQL Server `datetime` ≈ 3.33 ms) | Explicit precision |
+| Timestamp without time zone | Compared as local date-time, truncated to the lower precision of the two sides (e.g. MySQL `DATETIME` and Oracle `DATE` = seconds, PostgreSQL = µs, Oracle `TIMESTAMP(9)` = ns) | Explicit precision |
+| MySQL zero dates | `'0000-00-00'` and `'0000-00-00 00:00:00'` are read as a zero-date marker (the adapter selects them in a form that does not throw) and **equal NULL** by default, because migration tools usually convert them to NULL | `zeroDateAsNull: false` keeps them distinct |
 | Timestamp with time zone | Converted to a UTC `Instant` | none |
 | Date | Oracle `DATE` compared as timestamp(0) | none |
 | UUID | Lower-case canonical text; `binary(16)` decoded | Byte order for `binary(16)` |
@@ -715,7 +906,7 @@ run's `config_snapshot` and printed in reports.
 | Binary / LOB | Streamed SHA-256 digest; never held whole in memory. Samples show `<binary 3.2 MB sha256=ab12…>`. | none |
 | Excluded columns | Skipped (for example `updated_at`, `row_version`) | Per table, or globally by glob |
 
-### 7.12 Keys, ordering and collation
+### 7.13 Keys, ordering and collation
 
 A merge-join only works if both sides return keys in the **same order**. String keys under
 different collations do not. `orderByKey` therefore sorts by binary collation:
@@ -723,45 +914,63 @@ different collations do not. `orderByKey` therefore sorts by binary collation:
 | Dialect | Expression |
 |---|---|
 | PostgreSQL | `col COLLATE "C"` |
-| MySQL / MariaDB | `col COLLATE utf8mb4_bin` (or `BINARY col`) |
-| SQL Server | `col COLLATE Latin1_General_BIN2` |
+| MySQL | `BINARY col` (orders by the bytes of the column's own character set) |
 | Oracle | `NLSSORT(col, 'NLS_SORT=BINARY')` |
 
 The Java key comparator compares Unicode code points. Numeric, date and UUID keys compare as
 values. As a safety net, each stream checks that keys arrive **strictly ascending** by the
-comparator. If a stream goes out of order (an exotic collation, or supplementary characters
-under SQL Server's UTF-16 ordering), the table stops with status `ERROR` and the message "key
+comparator. If a stream goes out of order (for example a MySQL `latin1` column, which is
+cp1252, whose byte order is not code-point order), the table stops with status `ERROR` and the message "key
 order mismatch", **never a false MISMATCH**. In P2 the table instead falls back to a
 hash-partition compare that spills to `DBMIG_SPILL_DIR` with bounded memory.
 
 Binary-collation `ORDER BY` can prevent index use on string keys. The UI warns when a `FULL`
 compare targets a large table keyed by strings.
 
-### 7.13 Consistency with live sources
+### 7.14 Consistency with live sources
 
 If the source is still taking writes, a comparison sees a moving target. Mitigations:
 
 - The run form asks "Is the source frozen?" and stores the answer. Reports print it, and
   unfrozen runs carry a "results may include in-flight changes" banner.
-- Each table stream runs in its own snapshot where the platform supports it: PostgreSQL
-  `REPEATABLE READ READ ONLY`, SQL Server `SNAPSHOT` if enabled, Oracle flashback `AS OF SCN`
-  (P2).
+- Each table is read inside a consistent read-only snapshot:
+
+  | Dialect | Snapshot | Watch out for |
+  |---|---|---|
+  | PostgreSQL | `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY` | Long snapshots hold back vacuum on busy sources |
+  | MySQL (InnoDB) | `START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY` at `REPEATABLE READ` | MyISAM tables have no snapshot; results for them are flagged |
+  | Oracle | `SET TRANSACTION READ ONLY` (transaction-level read consistency) | Long streams on a busy source can fail with `ORA-01555 snapshot too old`. The table is then retried once in key-range chunks, and the error suggests a larger `UNDO_RETENTION` or running during the freeze. |
+
+- P2: Oracle flashback `AS OF SCN` pins counts, profiles and streams for every table to one SCN.
 - P2 recheck: after the run, mismatched keys are fetched again after `recheck.delaySeconds`, and
   differences that resolved themselves (CDC lag) are reclassified as transient.
 
-### 7.14 Target health checks and auto-check types
+### 7.15 Target health checks and auto-check types
 
 | Auto-check type | Source of truth | Passes when |
 |---|---|---|
 | `CONNECTIVITY` | Connection tests | Both default connections tested OK within 24 h |
-| `SCHEMA_CLEAN` | Latest relevant SCHEMA run | No unwaived `ERROR` diffs (config `allowWarnings` defaults to true) |
+| `SCHEMA_CLEAN` | Latest relevant SCHEMA run whose target is a live connection | No unwaived `ERROR` diffs (config `allowWarnings` defaults to true) |
 | `ROW_COUNTS_MATCH` | Latest relevant DATA run, any method | Every in-scope table has equal counts or is waived |
 | `DATA_MATCH` | Latest relevant DATA run with method ≥ `minMethod` | Every in-scope table is `MATCH` or waived |
-| `SEQUENCES_ALIGNED` | TARGET_HEALTH run | For every sequence or identity column owned by a table, the sequence's **next** value > `MAX(column)` (for ascending sequences) |
-| `FK_INTEGRITY` | TARGET_HEALTH run | No orphans in the anti-join for each FK. Always covers `NOT VALID` FKs; all FKs when `fullFkScan` is set |
-| `INDEXES_VALID` | TARGET_HEALTH run | No index with `indisvalid = false` or `indisready = false` (failed `CREATE INDEX CONCURRENTLY`) |
-| `STATS_FRESH` | TARGET_HEALTH run | Every non-empty table has been analyzed since the load (`pg_stat_user_tables.last_analyze` / `last_autoanalyze`) |
-| `TRIGGERS_ENABLED` | TARGET_HEALTH run | No user trigger left disabled (`pg_trigger.tgenabled = 'D'`) |
+| `SEQUENCES_ALIGNED` | TARGET_HEALTH run | Every sequence, identity or auto-increment column will hand out a value above `MAX(column)` |
+| `FK_INTEGRITY` | TARGET_HEALTH run | No orphaned child rows (anti-join per FK), and no FK left disabled |
+| `INDEXES_VALID` | TARGET_HEALTH run | No invalid or unusable index |
+| `STATS_FRESH` | TARGET_HEALTH run | Every non-empty table was analyzed after the load (the completion time of DATA-03, or `loadCompletedAt` in the profile) |
+| `TRIGGERS_ENABLED` | TARGET_HEALTH run | No user trigger left disabled |
+| `OBJECTS_VALID` | TARGET_HEALTH run | No invalid compiled objects |
+
+How each health check runs on each target dialect. "n/a" is reported as `NOT_APPLICABLE`, never
+as a pass:
+
+| Check | PostgreSQL | MySQL | Oracle |
+|---|---|---|---|
+| `SEQUENCES_ALIGNED` | Owned sequences and identity columns (query below) | `AUTO_INCREMENT` from `information_schema.TABLES` (with `information_schema_stats_expiry = 0` on 8.0+) compared with `MAX(col)` | Identity columns (`ALL_TAB_IDENTITY_COLS`, 12c+), columns with `DEFAULT seq.NEXTVAL`, and trigger-fed sequences mapped in the profile. `ALL_SEQUENCES.LAST_NUMBER` is the cache high-water mark, so `LAST_NUMBER ≤ MAX` is a FAIL and `LAST_NUMBER − CACHE_SIZE × INCREMENT_BY ≤ MAX` is a WARNING ("may collide within the cached range"). |
+| `FK_INTEGRITY` | Anti-join for `NOT VALID` FKs (`convalidated = false`); all FKs when `fullFkScan` | Anti-join for **every** FK by default, because loads with `FOREIGN_KEY_CHECKS=0` leave no trace in the catalog | FKs with `STATUS = 'DISABLED'` or `VALIDATED = 'NOT VALIDATED'` fail and are anti-joined; all FKs when `fullFkScan` |
+| `INDEXES_VALID` | `pg_index.indisvalid = false` or `indisready = false` (failed `CREATE INDEX CONCURRENTLY`) | n/a | `ALL_INDEXES.STATUS = 'UNUSABLE'`, `ALL_IND_PARTITIONS.STATUS = 'UNUSABLE'` |
+| `STATS_FRESH` | `pg_stat_user_tables.last_analyze` / `last_autoanalyze` | `mysql.innodb_table_stats.last_update` (needs SELECT on it; otherwise n/a with a note) | `ALL_TAB_STATISTICS.LAST_ANALYZED`, `STALE_STATS = 'YES'` |
+| `TRIGGERS_ENABLED` | `pg_trigger.tgenabled = 'D'` on user triggers | n/a (MySQL triggers cannot be disabled) | `ALL_TRIGGERS.STATUS = 'DISABLED'` |
+| `OBJECTS_VALID` | n/a | n/a | `ALL_OBJECTS.STATUS = 'INVALID'` (views, packages, procedures, triggers, synonyms, …) |
 
 Sequence ownership query for a PostgreSQL target (serial columns use `deptype 'a'`, identity
 columns use `'i'`). `pg_sequence_last_value` returns **NULL for a sequence that has never been
@@ -785,14 +994,14 @@ WHERE d.classid = 'pg_class'::regclass
 -- the validation account needs SELECT on the sequences
 ```
 
-### 7.15 Safety and resource controls
+### 7.16 Safety and resource controls
 
 | Control | Default | Notes |
 |---|---|---|
 | Read-only session | always | `Connection.setReadOnly(true)` plus `SET TRANSACTION READ ONLY` where supported. dbmig **also** recommends a read-only DB account and warns when the account can write. |
-| Statement timeout | 60 s metadata, 30 min per stream | PostgreSQL `statement_timeout`, MySQL `max_execution_time`, and JDBC `setQueryTimeout` elsewhere |
+| Statement timeout | 60 s metadata, 30 min per stream | PostgreSQL `statement_timeout`; MySQL `max_execution_time` (SELECT only); Oracle has no session-level timeout, so the driver cancels via `setQueryTimeout` |
 | Connect timeout | 10 s | |
-| Application name | `dbmig-run-<id>` | PostgreSQL `ApplicationName`, MySQL `connectionAttributes`, SQL Server `applicationName`, so DBAs can find and kill sessions |
+| Application name | `dbmig-run-<id>` | PostgreSQL `ApplicationName`, MySQL `connectionAttributes=program_name:…`, Oracle `v$session.program`, so DBAs can find and kill sessions |
 | Parallel tables per run | 4 (max 16) | Each table uses 1 connection per side |
 | Concurrent runs | 2 globally, 1 per kind per project | Extra runs wait in the queue |
 | Fetch size | 5,000 | |
@@ -800,7 +1009,7 @@ WHERE d.classid = 'pg_class'::regclass
 | Identifiers | always quoted by the adapter | Identifiers come **only** from extracted metadata, never from free text |
 | Filters | structured only | Column must exist, operator from an enum, values bound as parameters. No raw SQL predicates. |
 
-### 7.16 Run outcome rules
+### 7.17 Run outcome rules
 
 | Kind | FAIL | WARN | PASS |
 |---|---|---|---|
@@ -820,9 +1029,9 @@ auto-check.
 | Report | Audience | Sections |
 |---|---|---|
 | **Checklist status** | Team, PMO | Progress per phase; items by status; blocked items with notes; overdue items; gate and sign-off register; evidence index |
-| **Schema comparison** | DBAs, reviewers | Run metadata (connections, versions, profile, time); inventory per side; summary matrix of object type × diff type × severity; details grouped by schema and table with attribute diffs; waivers with reasons; the fix script as an appendix |
+| **Schema comparison** | DBAs, reviewers | Run metadata (both sides: connection and server version, or DDL snapshot with dialect, version, files and SHA-256; profile; time); parse summary for DDL-snapshot sides; inventory per side; summary matrix of object type × diff type × severity; details grouped by schema and table with attribute diffs; waivers with reasons; the fix script as an appendix |
 | **Data validation** | DBAs, QA, auditors | Run metadata; normalization rules applied; results per table (method, counts, mismatches, duration, status); mismatch samples (masked); skipped tables with reasons; waivers and tolerances |
-| **Readiness (go/no-go)** | Cutover meeting, sponsors | Verdict and criteria (§5.9); open blockers; latest schema, data and health results; gate sign-offs; risks; approval block with names and dates |
+| **Readiness (go/no-go)** | Cutover meeting, sponsors | Verdict and criteria (§5.10); open blockers; latest schema, data and health results; gate sign-offs; risks; approval block with names and dates |
 | **Final migration** | Audit, compliance, archive | Timeline of phases and sign-offs; every run with outcome; final validation evidence; all waivers ever granted; lessons learned; approvals |
 
 ### 8.2 Formats
@@ -835,7 +1044,8 @@ auto-check.
 | Readiness | ✔ | ✔ | | | ✔ |
 | Final migration | ✔ | ✔ | ✔ | | ✔ |
 
-The schema fix script is also downloadable on its own as `.sql` (§7.8).
+The schema fix script is also downloadable on its own as `.sql` (§7.9), and a snapshot's parse
+report can be exported as CSV.
 
 ### 8.3 Generation pipeline
 
@@ -858,41 +1068,50 @@ The schema fix script is also downloadable on its own as `.sql` (§7.8).
 
 ```mermaid
 flowchart LR
-  subgraph Browser
-    UI["dbmig-web<br/>React 18 + TS + Vite"]
-  end
-  subgraph VPS["Coolify on Hostinger VPS"]
-    API["dbmig-service<br/>Spring Boot 3.3 / Java 17"]
-    W["Run and report workers<br/>(in-process thread pools)"]
+  B["Browser"]
+  F["DDL files<br/>.sql or .zip"]
+  subgraph HOST["Docker host: Coolify VPS or on-premises"]
+    subgraph APP["dbmig container"]
+      UI["React UI (static)<br/>served at /"]
+      API["REST API at /api<br/>Spring Boot 3.3 / Java 17"]
+      W["Workers: runs, snapshots, reports<br/>(in-process thread pools)"]
+    end
     APPDB[("dbmig app DB<br/>PostgreSQL")]
   end
-  SRC[("Source DB<br/>PostgreSQL / MySQL / SQL Server / Oracle")]
-  TGT[("Target DB<br/>PostgreSQL / ...")]
-  UI -- "REST + JWT" --> API
+  SRC[("Source DB<br/>MySQL / PostgreSQL / Oracle")]
+  TGT[("Target DB<br/>MySQL / PostgreSQL / Oracle")]
+  B --> UI
+  B -- "REST + JWT" --> API
+  F -- "upload" --> API
   API --> APPDB
   W -- "claim jobs (SKIP LOCKED)" --> APPDB
   W -- "read-only JDBC" --> SRC
   W -- "read-only JDBC" --> TGT
 ```
 
+Either side of a schema comparison can be a DDL snapshot instead of a live database, in which
+case no connection to that database is opened.
+
 ### 9.2 Backend package layout
 
-`com.humanworkstream.dbmig`, following Cooked's layout plus three packages:
+`com.humanworkstream.dbmig`, following Cooked's layout plus four packages:
 
 | Package | Contents |
 |---|---|
-| `controller/` | One per domain: `AuthController`, `UserAdminController`, `ProjectController`, `ConnectionController`, `ChecklistController`, `ChecklistTemplateController`, `ProfileController`, `RunController`, `WaiverController`, `ReportController`, `AuditController`, `HealthCheckController` |
-| `service/` | `ProjectService`, `ProjectAccessService`, `ConnectionService`, `CryptoService`, `ChecklistService`, `AutoCheckService`, `ReadinessService`, `RunService`, `WaiverService`, `ReportService`, `AuditService`, `RetentionService`. Log lines use the `[ServiceName]` prefix. |
-| `engine/` | Framework-free comparison engine: `dialect/` (adapters, `DialectRegistry`), `metadata/` (canonical records), `schema/` (`SchemaComparator`, `ObjectMatcher`, `TypeCompatibility`, `SeverityPolicy`, `FixScriptGenerator`, `PostgresDdlRenderer`), `data/` (`DataComparator`, `RowStream`, `MergeJoinComparer`, `ValueNormalizer`, `ProfileAggregator`), `health/` (`TargetHealthChecker`) |
-| `job/` | `JobClaimer`, `RunWorker`, `ReportWorker`, `ProgressReporter`, `CancellationRegistry`, `StaleJobReaper`, `RunDataSourceFactory` |
+| `controller/` | One per domain: `AuthController`, `UserAdminController`, `ProjectController`, `ConnectionController`, `ChecklistController`, `ChecklistTemplateController`, `SnapshotController`, `ProfileController`, `RunController`, `WaiverController`, `ReportController`, `AuditController`, `HealthCheckController` |
+| `service/` | `ProjectService`, `ProjectAccessService`, `ConnectionService`, `SnapshotService`, `CryptoService`, `ChecklistService`, `AutoCheckService`, `ReadinessService`, `RunService`, `WaiverService`, `ReportService`, `AuditService`, `RetentionService`. Log lines use the `[ServiceName]` prefix. |
+| `engine/` | Framework-free comparison engine: `dialect/` (`PostgresAdapter`, `MySqlAdapter`, `OracleAdapter`, `DialectRegistry`), `metadata/` (canonical records), `ddl/` (`DdlStatementSplitter` per dialect, `DdlParser`, `DdlReplayer`, `DialectDetector`, `ExpressionNormalizer`), `schema/` (`SchemaComparator`, `ObjectMatcher`, `TypeCompatibility`, `SeverityPolicy`, `FixScriptGenerator`, `PostgresDdlRenderer`, `MySqlDdlRenderer`, `OracleDdlRenderer`), `data/` (`DataComparator`, `RowStream`, `MergeJoinComparer`, `ValueNormalizer`, `ProfileAggregator`), `health/` (`TargetHealthChecker`) |
+| `job/` | `JobClaimer`, `RunWorker`, `SnapshotWorker`, `ReportWorker`, `ProgressReporter`, `CancellationRegistry`, `StaleJobReaper`, `RunDataSourceFactory` |
 | `report/` | `ReportRenderer` implementations: HTML/PDF, XLSX, CSV, JSON |
 | `repository/`, `entity/`, `enumeration/`, `dto/` | Same conventions as Cooked. DTOs are Java records with Bean Validation, and PATCH skips null fields. |
-| `config/` | `SecurityConfig`, `CorsConfig`, `PostgresEnumConverters`, `JobConfig` |
+| `web/` | `ApiPrefixConfig` (puts every `@RestController` under `/api` via `PathMatchConfigurer`), `SpaForwardingController` (serves `index.html` for browser routes outside `/api` and static assets) |
+| `config/` | `SecurityConfig`, `CorsConfig` (dev profile only; production is same-origin), `PostgresEnumConverters`, `JobConfig` |
 | `security/` | `JwtAuthenticationFilter`, `JwtUtil`, `UserPrincipal`, `SecurityUtils`, `AuthRateLimitFilter` |
 
 ### 9.3 Job execution
 
-Runs and reports use a **database-backed queue**. There is no broker; Postgres is the queue.
+Runs, DDL snapshot parsing and reports use a **database-backed queue**. There is no broker;
+Postgres is the queue.
 
 ```mermaid
 sequenceDiagram
@@ -902,16 +1121,16 @@ sequenceDiagram
   participant W as RunWorker
   participant S as Source
   participant T as Target
-  UI->>API: POST /projects/{id}/runs
-  API->>DB: insert comparison_run (QUEUED, config_snapshot)
+  UI->>API: POST /api/projects/{id}/runs
+  API->>DB: insert comparison_run (QUEUED, effective_config)
   API-->>UI: 202 Accepted + runId
   loop every 2 s while capacity is free
     W->>DB: claim oldest QUEUED run (FOR UPDATE SKIP LOCKED)
   end
-  W->>S: read-only metadata and row streams
-  W->>T: read-only metadata and row streams
+  W->>S: read-only metadata and row streams (or load DDL snapshot)
+  W->>T: read-only metadata and row streams (or load DDL snapshot)
   W->>DB: batch-insert results, heartbeat, progress
-  UI->>API: GET /runs/{runId} (poll every 2 s)
+  UI->>API: GET /api/runs/{runId} (poll every 2 s)
   W->>DB: status SUCCEEDED, outcome, summary
   W->>DB: evaluate auto-checks and update checklist items
 ```
@@ -928,8 +1147,8 @@ sequenceDiagram
   chunks and calls `Statement.cancel()` on open streams.
 - **Result writes** use `JdbcTemplate.batchUpdate` (500 rows per batch) instead of JPA
   `saveAll`.
-- Reports use the same claim, heartbeat and reaper pattern on the `report` table, with their own
-  pool (default 2 threads).
+- DDL snapshots and reports use the same claim, heartbeat and reaper pattern on the
+  `ddl_snapshot` and `report` tables, each with its own pool (default 2 threads).
 
 ### 9.4 Connections to migrated databases
 
@@ -941,13 +1160,15 @@ sequenceDiagram
 - JDBC drivers ship with the service. The app's own datasource (the dbmig DB) is a separate,
   normal Spring datasource.
 
-### 9.5 Frontend structure (`dbmig-web`)
+### 9.5 Frontend structure (`frontend/`)
 
-This follows `appointment-web` and Cooked's UI conventions:
+The UI lives in the `frontend/` folder of the single `dbmig` repo. It is built into the backend
+image and served from the same origin (§16.1). It follows `appointment-web` and Cooked's UI
+conventions:
 
 ```text
 src/
-  api/client.ts        fetch wrapper: base URL, Bearer JWT, 401 → logout, ProblemDetail → ApiError
+  api/client.ts        fetch wrapper: base path /api, Bearer JWT, 401 → logout, ProblemDetail → ApiError
   api/queries.ts       hooks (useProjects, useChecklist, useRun(poll), …) + DTO → domain transforms
   types.ts             domain types (single source of truth)
   styles.css           CSS variables: --md-primary, --md-ink, --md-line, --md-bg, plus status
@@ -957,19 +1178,23 @@ src/
   components/project/  ProjectShell (side nav), GoNoGoPanel, PhaseProgress, RecentRuns
   components/checklist/PhaseSection, ChecklistRow, ItemDrawer, EvidenceList, CommentThread,
                        DependencyPicker, SignOffBar
-  components/compare/  RunLauncher, RunProgress, SchemaTree, AttributeDiffTable, DdlSideBySide,
-                       DataResultsTable, MismatchGrid, WaiverModal, ProfileEditor
+  components/compare/  RunLauncher, SideSelector (connection | DDL snapshot), RunProgress,
+                       SchemaTree, AttributeDiffTable, DdlSideBySide, DataResultsTable,
+                       MismatchGrid, WaiverModal, ProfileEditor
+  components/snapshots/DdlUploader (files, order, dialect detection), ParseReport, SnapshotCard
   components/reports/  ReportGenerator, ReportList
-  pages/               LoginPage, ProjectsPage, ProjectOverviewPage, ChecklistPage,
-                       ConnectionsPage, SchemaRunsPage, SchemaRunPage, DataRunsPage, DataRunPage,
+  pages/               LoginPage, ProjectsPage, QuickComparePage, ProjectOverviewPage,
+                       ChecklistPage, ConnectionsPage, SnapshotsPage, SnapshotPage, SchemaRunsPage, SchemaRunPage, DataRunsPage, DataRunPage,
                        HealthPage, ReportsPage, ProjectSettingsPage,
                        admin/TemplatesPage, admin/TemplateEditPage, admin/UsersPage
 ```
 
+- In development, Vite proxies `/api` to the local backend (`localhost:8083`), so the browser
+  still sees one origin.
 - Styling uses inline `style` props with CSS variables only; no hardcoded colors.
 - Mutations call `refetch()` on the relevant hook afterwards. There are no optimistic updates.
-- `useRun(runId)` polls every 2 s while the run is `QUEUED` or `RUNNING`, pauses while the tab is
-  hidden, and stops when the run finishes.
+- `useRun(runId)` and `useSnapshot(snapshotId)` poll every 2 s while the job is `QUEUED` or
+  `RUNNING`, pause while the tab is hidden, and stop when it finishes.
 - Large lists (diffs, table results, mismatches) are paginated on the server and virtualized in
   the browser with `@tanstack/react-virtual`.
 - Downloads use `fetch` → `Blob` → object URL, so the JWT stays in the `Authorization` header
@@ -990,6 +1215,7 @@ erDiagram
   app_user ||--o{ project_member : "belongs to"
   project ||--o{ project_member : has
   project ||--o{ db_connection : has
+  project ||--o{ ddl_snapshot : has
   project ||--o{ comparison_profile : has
   project ||--o{ comparison_run : has
   project ||--o{ checklist_item : has
@@ -1001,6 +1227,9 @@ erDiagram
   checklist_item ||--o{ checklist_item_evidence : has
   checklist_item ||--o{ checklist_item_dependency : "depends on"
   db_connection ||--o{ comparison_run : "source or target of"
+  ddl_snapshot ||--o{ comparison_run : "source or target of"
+  ddl_snapshot ||--o{ ddl_snapshot_message : "parse report"
+  db_connection ||--o{ ddl_snapshot : "captured from"
   comparison_profile ||--o{ comparison_run : configures
   comparison_run ||--o{ schema_diff : produces
   comparison_run ||--o{ data_table_result : produces
@@ -1013,10 +1242,11 @@ erDiagram
 | `app_user` | Users, BCrypt hash, global role, active flag |
 | `project`, `project_member` | Migration projects and membership with project role |
 | `db_connection` | Endpoints; password AES-GCM encrypted (`password_enc`, `password_iv`, `key_version`); captured server info |
+| `ddl_snapshot`, `ddl_snapshot_message` | Uploaded or captured schemas: original files (zipped), canonical model (gzip JSON), parse status and counts; parse messages with file and line |
 | `checklist_template`, `checklist_template_item` | Admin-maintained templates |
 | `checklist_item` (+ `_dependency`, `_comment`, `_evidence`) | The project's checklist |
 | `comparison_profile` | Saved comparison config (`config` JSONB, Appendix B) |
-| `comparison_run` | Runs: queue fields, status, outcome, progress, frozen `config_snapshot`, summary |
+| `comparison_run` | Runs: each side's kind (`CONNECTION`/`DDL`) and reference, queue fields, status, outcome, progress, frozen `effective_config`, summary. `CHECK` constraints enforce the allowed side kinds per run kind (FR-DDL-8). |
 | `schema_diff` | Schema differences with fingerprint and attribute diffs |
 | `data_table_result`, `data_mismatch` | Data results per table and capped, masked samples |
 | `health_check_result` | Target health check results |
@@ -1041,15 +1271,18 @@ erDiagram
 
 ### 11.1 Conventions
 
-- JSON over HTTPS with no global prefix (Cooked style). Auth is `Authorization: Bearer <jwt>`.
+- JSON over HTTPS. **Every path is under `/api`**, because the UI is served from the same
+  origin and `/api` keeps API routes apart from browser routes such as `/projects/42`. Paths in
+  §11.2 omit the prefix. Auth is `Authorization: Bearer <jwt>`.
 - Errors are Spring `ProblemDetail` (RFC 7807) with a machine-readable `code`:
   `{"status":409,"title":"Conflict","detail":"VAL-02 depends on VAL-01, which is not done","code":"DEPENDENCY_NOT_DONE"}`.
 - Pagination uses `?page=0&size=50` and returns `{content, page, size, totalElements}`.
-- Long operations (runs, reports) return **202 Accepted** with a `Location` header, and the
-  client polls.
+- Long operations (runs, DDL snapshot parsing, reports) return **202 Accepted** with a
+  `Location` header, and the client polls.
 - PATCH skips null fields. Ownership and authorship always come from the JWT, never from the
   body.
-- Public endpoints: `POST /auth/login`, `/healthcheck`, `/db/healthcheck`.
+- Public endpoints: `POST /api/auth/login`, `/api/healthcheck`, `/api/db/healthcheck`, plus
+  the static UI.
 
 ### 11.2 Endpoints
 
@@ -1089,6 +1322,20 @@ Min role is the lowest project role allowed (see §3.3). ADMIN always passes.
 | GET | `/connections/{connectionId}/schemas` | ENGINEER | |
 | GET | `/connections/{connectionId}/tables?schema=` | ENGINEER | Name, estimated rows, has-PK |
 
+**DDL snapshots**
+
+| Method | Path | Min role | Notes |
+|---|---|---|---|
+| POST | `/projects/{projectId}/snapshots/detect` | ENGINEER | Multipart sample (first 1 MB) → `{dialect, confidence, signals[]}` for the upload form |
+| POST | `/projects/{projectId}/snapshots` | ENGINEER | Multipart `files[]` + `{name, dialect, dialectVersion?, defaultSchema?, fileOrder?}` → 202. Parsing is queued. |
+| POST | `/connections/{connectionId}/snapshot` | ENGINEER | `{name}` → 202. Captures the live schema (FR-DDL-5). |
+| GET | `/projects/{projectId}/snapshots` | VIEWER | Name, origin, dialect and version, status, object counts, parse summary |
+| GET | `/snapshots/{snapshotId}` | VIEWER | Status, statement counts (applied / ignored / failed), object inventory, file list with SHA-256 |
+| GET | `/snapshots/{snapshotId}/messages` | VIEWER | Parse report. Filters: `severity`, `file`. Paged. `.csv` variant for export. |
+| GET | `/snapshots/{snapshotId}/files` | VIEWER | Original upload as a `.zip` |
+| GET | `/snapshots/{snapshotId}/ddl` | VIEWER | Schema regenerated as normalized DDL in the snapshot's dialect |
+| DELETE | `/snapshots/{snapshotId}` | LEAD | 409 while a queued or running run uses it. Finished runs keep its name and hash. |
+
 **Checklist**
 
 | Method | Path | Min role | Notes |
@@ -1123,7 +1370,8 @@ Min role is the lowest project role allowed (see §3.3). ADMIN always passes.
 |---|---|---|---|
 | GET / POST | `/projects/{projectId}/profiles` | VIEWER / ENGINEER | |
 | PATCH / DELETE | `/profiles/{profileId}` | ENGINEER / LEAD | |
-| POST | `/projects/{projectId}/runs` | ENGINEER | 202. See Appendix B. A full queue returns 429. |
+| POST | `/projects/{projectId}/runs` | ENGINEER | 202. Each side is `{type: CONNECTION, connectionId}` or `{type: DDL, snapshotId}` (Appendix B.2). Invalid side kinds for the run kind return 400; a snapshot not yet parsed returns 409; a full queue returns 429. |
+| POST | `/quick-compares` | USER | Same body as a schema run, without `projectId`. Files it in the caller's "Quick compares" project (FR-PRJ-6). |
 | GET | `/projects/{projectId}/runs` | VIEWER | Filters: `kind`, `status`, `outcome`. Paged. |
 | GET | `/runs/{runId}` | VIEWER | Status, progress, current step, summary, `outcome`, `effectiveOutcome` |
 | POST | `/runs/{runId}/cancel` | ENGINEER | |
@@ -1160,10 +1408,12 @@ Min role is the lowest project role allowed (see §3.3). ADMIN always passes.
 
 ```text
 /login
+/quick-compare                          pick two sides (connection or DDL), run a schema compare
 /projects                               project list, "New project"
 /projects/:projectId                    Overview (dashboard, go/no-go)
   /checklist                            phase-grouped checklist + item drawer
-  /connections                          source/target cards, test, edit
+  /connections                          source/target cards, test, edit, "Capture snapshot"
+  /snapshots       /snapshots/:id       DDL snapshots: upload, parse report, download
   /schema          /schema/:runId       schema runs → diff viewer
   /data            /data/:runId         data runs → table results
                    /data/:runId/tables/:tableResultId   mismatch drill-down
@@ -1185,12 +1435,12 @@ Min role is the lowest project role allowed (see §3.3). ADMIN always passes.
 │ Overview      │ ERP Oracle → Postgres            Cutover: Sat 12 Oct 22:00 │
 │ Checklist     │ ┌ Go / No-Go ──────────────────────────────── NO-GO ─────┐ │
 │ Connections   │ │ ✔ Gate items signed off (16/16)                        │ │
-│ Schema        │ │ ✖ Schema: 3 unwaived errors (run 1041)                 │ │
-│ Data          │ │ ✔ Data: 212/212 tables match (run 1042)                │ │
-│ Target health │ │ ✔ Target health: pass     ✖ 2 items BLOCKED            │ │
-│ Reports       │ └────────────────────────────────────────────────────────┘ │
-│ Settings      │ Checklist 64%  DISC ██████ PLAN ██████ PREP █████░ SCH ███░ │
-│               │ Recent runs                                                │
+│ DDL snapshots │ │ ✖ Schema: 3 unwaived errors (run 1041)                 │ │
+│ Schema        │ │ ✔ Data: 212/212 tables match (run 1042)                │ │
+│ Data          │ │ ✔ Target health: pass     ✖ 2 items BLOCKED            │ │
+│ Target health │ └────────────────────────────────────────────────────────┘ │
+│ Reports       │ Checklist 64%  DISC ██████ PLAN ██████ PREP █████░ SCH ███░ │
+│ Settings      │ Recent runs                                                │
 │               │  1042  Data FULL     ✔ PASS   212 tables   18 m   2 h ago  │
 │               │  1041  Schema        ✖ FAIL   3 err 14 warn       2 h ago  │
 │               │ Blocked / overdue                                          │
@@ -1216,7 +1466,7 @@ comments, history, and for LEADs **Sign off** and **Override auto-check**.
 **Schema diff viewer**
 
 ```text
-Run 1041 · Schema · FAIL     ERP-PROD (Oracle 19.21) → PG-UAT (PostgreSQL 16.4)
+Run 1041 · Schema · FAIL     ERP-PROD (Oracle 19.21, live) → pg_target_v3 (DDL snapshot · PostgreSQL 16)
 [✖ Errors 3] [⚠ Warnings 14] [ⓘ Info 40] [Waived 5]  Type [All ▾] 🔍 ______  [Fix script ⤓] [Report ⤓]
 ┌ Objects ───────────────────┬ Detail ─────────────────────────────────────────────┐
 │ ▼ HR                       │ COLUMN hr.employees.salary        CHANGED · ✖ ERROR │
@@ -1247,9 +1497,55 @@ The mismatch drill-down shows key columns, then each compared column as *source 
 Differing cells are highlighted with the `--md-danger` token plus a ✖ marker. It has buttons
 for **Copy lookup SQL** and **Export CSV**.
 
-**Run launcher (modal):** kind, source and target connection (defaults preselected), profile,
-method (DATA), table picker with per-table method, "Is the source frozen?", and an estimated row
-volume with a warning above 100 M rows for `FULL`.
+**Run launcher / quick compare**
+
+```text
+┌ New comparison ─────────────────────────────────────────────────────────────┐
+│ Kind     (●) Schema   ( ) Data   ( ) Target health                          │
+│                                                                             │
+│ Source                                Target                                │
+│ (●) Connection  ( ) DDL snapshot      ( ) Connection  (●) DDL snapshot      │
+│ [ERP-PROD · Oracle 19.21        ▾]    [pg_target_v3 · PostgreSQL 16  ▾]     │
+│  ✔ tested 12 min ago                   ✔ parsed: 4,812 applied, 3 failed    │
+│                                       [⤒ Upload DDL…]                       │
+│ Profile  [ERP default ▾]                                                    │
+│ ☐ Source is frozen (no writes during the run)                               │
+│ ⓘ Data and target-health runs need live connections on both sides.          │
+│                                               [Cancel]  [Run comparison]    │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+For data runs the launcher adds the method, a table picker with per-table methods, and an
+estimated row volume with a warning above 100 M rows for `FULL`. Side kinds that the chosen run
+kind does not allow are disabled, with the reason shown.
+
+**Upload DDL (modal)**
+
+```text
+┌ Upload DDL ─────────────────────────────────────────────────────────────────┐
+│ Name     [pg_target_v3                  ]                                   │
+│ Files    1. V1__init.sql   2. V2__orders.sql   3. V3__billing.sql  [+ Add]  │
+│          order: natural sort (drag to reorder)                              │
+│ Dialect  [PostgreSQL ▾]  detected: PostgreSQL, high ($$, ::, OWNER TO)      │
+│ Version  [16 ▾]          Default schema [public          ]                  │
+│                                               [Cancel]  [Upload and parse]  │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**DDL snapshot parse report**
+
+```text
+Snapshot pg_target_v3 · PostgreSQL 16 · upload · 3 files · sha256 9f2c…      [Files ⤓] [DDL ⤓]
+Status ✔ SUCCEEDED    Statements 4,818: 4,812 applied · 3 ignored · 3 failed
+Objects  tables 212 · columns 3,120 · indexes 388 · FKs 190 · views 14 · functions 22 · sequences 40
+Severity [All ▾]  File [All ▾]                                                 [Export CSV]
+File               Line  Severity    Message
+V3__billing.sql     118  ✖ ERROR     ALTER TABLE billing.invoice: table does not exist at this point
+V3__billing.sql     431  ⚠ WARNING   INSERT INTO ref.country …: data statements are not loaded
+V1__init.sql          9  ⓘ INFO      GRANT SELECT ON … : grants are not compared
+```
+
+Expanding a row shows the full statement with the failing position highlighted.
 
 ---
 
@@ -1257,11 +1553,12 @@ volume with a warning above 100 M rows for `FULL`.
 
 | Area | Requirement |
 |---|---|
-| Performance (targets, validated in M3) | Schema extraction and compare of 1,000 tables / 20,000 columns in < 60 s on a LAN. `FULL` compare ≥ 30,000 rows/s per table stream at 20 columns. `ROW_COUNT` across 1,000 tables in < 5 min with parallelism 4. API p95 < 300 ms for non-run endpoints. |
+| Performance (targets, validated in M3) | Schema extraction and compare of 1,000 tables / 20,000 columns in < 60 s on a LAN. `FULL` compare ≥ 30,000 rows/s per table stream at 20 columns. `ROW_COUNT` across 1,000 tables in < 5 min with parallelism 4. DDL snapshot of 20 MB / 50,000 statements parsed in < 60 s. API p95 < 300 ms for non-run endpoints. |
 | Memory | Backend heap ≤ 1 GB whatever the table size (streaming, capped samples, SXSSF). |
 | Scalability | Single instance for MVP. The job claim design (§9.3) allows more instances without code changes. |
-| Reliability | Queued runs survive restarts. Lost workers are reaped within 2 minutes. Every run is repeatable from its `config_snapshot`. |
+| Reliability | Queued runs survive restarts. Lost workers are reaped within 2 minutes. Every run is repeatable from its `effective_config`. |
 | Observability | Spring Boot Actuator (`health`, `metrics`). Structured logs with `runId`/`projectId` in MDC. Log lines like `[RunWorker] runId=1042 table=sales.orders rows=8120331 ms=192000`. |
+| Offline operation | No runtime calls to the internet: fonts, scripts and icons are bundled in the image, so dbmig runs in air-gapped client networks. |
 | Time | All timestamps stored as `timestamptz` (UTC) and shown in the browser's time zone. |
 | Retention | Mismatch samples purged after `DBMIG_SAMPLE_RETENTION_DAYS` (default 30; counts are kept). Runs, reports and audit log kept until the project is deleted. |
 | Accessibility | WCAG 2.1 AA: keyboard-operable tree, grid and drawer; contrast via tokens; status never shown by color alone. |
@@ -1274,8 +1571,9 @@ volume with a warning above 100 M rows for `FULL`.
 ### 14.1 Application
 
 - Stateless JWT (HS256, `JWT_SECRET` ≥ 32 chars) and BCrypt passwords, as in Cooked.
-- Login rate limiting (FR-AUTH-4), CORS restricted to the `dbmig-web` origin, security headers
-  (CSP, `X-Content-Type-Options`, `Referrer-Policy`).
+- Login rate limiting (FR-AUTH-4). UI and API share one origin, so CORS is off in production
+  (dev profile only). Security headers: CSP (`default-src 'self'`), `X-Content-Type-Options`,
+  `Referrer-Policy`.
 - Project isolation in the service layer, returning 404 for non-members (§3.3).
 - File uploads: size cap, content type sniffed (not trusted from the client), always served
   with `Content-Disposition: attachment`.
@@ -1292,7 +1590,11 @@ JDBC drivers can be abused through URL parameters. Known examples: PostgreSQL `s
 - Explicitly denied, even if later allow-listed by mistake: PostgreSQL `socketFactory`,
   `sslfactory`, `sslhostnameverifier`, `sslpasswordcallback`, `authenticationPluginClassName`,
   `loggerFile`; MySQL `autoDeserialize`, `allowLoadLocalInfile`, `allowUrlInLocalInfile`,
-  `queryInterceptors`, `statementInterceptors`, `connectionLifecycleInterceptors`.
+  `queryInterceptors`, `statementInterceptors`, `connectionLifecycleInterceptors`; Oracle
+  `oracle.net.tns_admin`, `oracle.net.wallet_location`, `javax.net.ssl.trustStore` and
+  `javax.net.ssl.keyStore` (all read local files).
+- Oracle connections are built as Easy Connect (`host:port/service` or `host:port:SID`). TNS
+  descriptors, `tnsnames.ora` aliases and LDAP URLs are not accepted.
 - H2, SQLite, Derby and any file-based or embedded driver are not supported.
 - Optional **host allow-list** `DBMIG_ALLOWED_HOSTS` (hostnames or CIDRs), so the service cannot
   be used to probe the internal network. When set, it is checked after DNS resolution.
@@ -1303,7 +1605,7 @@ JDBC drivers can be abused through URL parameters. Known examples: PostgreSQL `s
   `DBMIG_ENCRYPTION_KEY` (base64, 32 bytes).
 - `key_version` allows rotation: a new key is added as `DBMIG_ENCRYPTION_KEY_V2`, an admin task
   re-encrypts all rows, then the old key is removed.
-- Secrets are never returned, logged, included in reports or put in `config_snapshot`.
+- Secrets are never returned, logged, included in reports or put in `effective_config`.
 - Connection tests and runs are audited with user, connection and time.
 
 ### 14.4 Data from migrated databases
@@ -1316,6 +1618,17 @@ JDBC drivers can be abused through URL parameters. Known examples: PostgreSQL `s
   still kept.
 - Samples are purged after the retention period (§13).
 
+### 14.5 Uploaded DDL
+
+- DDL is **parsed in-process and never executed** (MVP). Sandbox mode (FR-DDL-9, P2) runs only
+  against connections explicitly flagged `scratch`.
+- Upload limits: 50 MB compressed, 200 MB uncompressed, at most 2,000 files per archive, 1 MB
+  per statement. Archives are checked against these limits while being read (zip-bomb guard)
+  and are never extracted to disk.
+- Each statement is parsed with a 5 s timeout, and each snapshot within a total time budget.
+- Files may contain sensitive names and comments. They are stored in the app DB with the
+  project, served only to project members, and deleted with the project.
+
 ---
 
 ## 15. Testing strategy
@@ -1323,29 +1636,57 @@ JDBC drivers can be abused through URL parameters. Known examples: PostgreSQL `s
 | Layer | Approach |
 |---|---|
 | Engine unit tests | Golden-file tests: canonical catalogs in JSON fixtures produce the expected diff list. `TypeCompatibility` tables. `ValueNormalizer` property tests (numeric scale, time zones, NFC, `''`/NULL). `MergeJoinComparer` with synthetic iterators covering missing, extra, duplicate and out-of-order keys. |
-| Adapter integration | Testcontainers: `postgres:16`, `mysql:8.4`, `mariadb:11` (MVP); `mcr.microsoft.com/mssql/server:2022`, `gvenzl/oracle-free` (P2). Fixture schemas contain **deliberate differences** and the tests assert the exact diffs found. Tagged `@Tag("containers")` so plain `mvn test` stays fast; CI runs `-Pcontainers`. |
-| Realistic pair | Sakila (MySQL) against Pagila (its PostgreSQL port) as a real cross-dialect fixture for the type mapping, normalization and fix script. |
+| Adapter integration | Testcontainers across the version matrix in §7.3.1: `postgres:9.6/12/14/16/17`, `mysql:5.7/8.0/8.4/9`, `gvenzl/oracle-xe:11/18/21`, `gvenzl/oracle-free:23`. Fixture schemas contain **deliberate differences**, and the tests assert the exact diffs found. Tagged `@Tag("containers")` so plain `mvn test` stays fast. CI runs the newest version of each dialect on every push and the full matrix nightly, including Oracle 12c/19c from Oracle Container Registry. |
+| DDL loader | **Round-trip test** for every version in the matrix: build the fixture schema, export it with the native tool (`pg_dump --schema-only`, `mysqldump --no-data`, `DBMS_METADATA.GET_DDL`), load the export as a snapshot, and assert that its catalog equals the live extraction, with no failed statements. Plus splitter unit tests (dollar quotes, `DELIMITER`, `/` terminators, versioned comments), a replay test with an ordered Flyway script set, and a corpus of real-world exports for the parser-coverage metric. |
+| Realistic fixtures | jOOQ's Sakila ports: the same schema in MySQL, PostgreSQL and Oracle, used as a real cross-dialect fixture for every pair (MySQL↔PostgreSQL, MySQL↔Oracle, Oracle↔PostgreSQL) for type mapping, normalization and fix scripts. |
 | Controllers | `@WebMvcTest` with security auto-configuration excluded and services as `@MockBean`. **`JwtUtil` is always a `@MockBean`** (house rule). |
 | Security | Tests for the JDBC property deny-list, non-member 404, VIEWER write attempts 403, secrets never in responses. |
 | Frontend | `npm run typecheck`; Vitest + React Testing Library for hooks and key components; one Playwright smoke test (login → create project → schema run against the compose fixtures → download PDF). |
-| Local | `docker-compose.fixtures.yml` starts a MySQL source and a PostgreSQL target with seeded differences, for manual testing against a local backend (no mocks when the backend runs). |
+| Local | `docker-compose.fixtures.yml` starts MySQL, PostgreSQL and Oracle Free with the Sakila fixtures and seeded differences, for manual testing against a local backend (no mocks when the backend runs). |
 
 ---
 
 ## 16. Deployment and configuration
 
-### 16.1 Topology
+### 16.1 Standalone packaging
 
-- **Coolify app 1:** `dbmig-service`, Nixpacks build, Java 17, port **8083** (proposed; confirm
-  it is free on the VPS; Cooked uses 8082).
-- **Coolify app 2:** `dbmig-web`, the Vite static build.
-- **Database:** a new `dbmig` database. It can live on the existing Coolify PostgreSQL instance
-  with its own roles.
-- From-scratch DB deploy follows Cooked's pattern with three idempotent scripts: `db/setup.sql`
-  (schema, roles, DDL), `db/account_creation.sql` (admin user), `db/seed.sql` (default
-  checklist template).
-- The Cooked development process applies unchanged: branch first, `db/<branch>/NN_*.sql`
-  migrations, keep `setup.sql` canonical, `release/<branch>.md` notes.
+dbmig ships as **one Docker image** that contains the UI, the API and all JDBC drivers, plus its
+own PostgreSQL for app data.
+
+```text
+dbmig/
+  backend/             Spring Boot (Maven), package com.humanworkstream.dbmig
+  frontend/            React 18 + TS + Vite (appointment-web structure)
+  db/                  setup.sql, seed.sql, <branch>/NN_*.sql migrations
+  release/             release notes per branch
+  Dockerfile           multi-stage: node build → maven build → JRE runtime
+  docker-compose.yml   dbmig + postgres:16 (runs db/setup.sql and db/seed.sql on first start)
+  .env.example
+```
+
+- **Dockerfile stages:**
+  1. `node:20` builds `frontend/dist`.
+  2. `maven:3-eclipse-temurin-17` copies the build into `backend/src/main/resources/static` and
+     runs `mvn package -DskipTests`.
+  3. `eclipse-temurin:17-jre` runs the JAR as a non-root user on port **8083**.
+- **Install anywhere Docker runs:**
+  1. `cp .env.example .env` and set `DBMIG_ENCRYPTION_KEY`, `JWT_SECRET`, the DB passwords and
+     the admin bootstrap variables.
+  2. `docker compose up -d`.
+  3. Open `http://<host>:8083` and sign in as the bootstrap admin, who must change the password
+     at first sign-in.
+- **Coolify:** one application using the **Dockerfile** build pack (Nixpacks does not build a
+  two-language monorepo into one image cleanly), plus a PostgreSQL resource, or a new `dbmig`
+  database on the existing instance. Port 8083 is proposed; Cooked uses 8082.
+- **App DB:** a fresh install runs two idempotent scripts, `db/setup.sql` (schema, roles, DDL)
+  and `db/seed.sql` (default checklist template). The compose file mounts them into
+  `/docker-entrypoint-initdb.d`.
+- **Admin bootstrap:** when no ADMIN exists at startup, the app creates one from
+  `DBMIG_ADMIN_EMAIL` and `DBMIG_ADMIN_INITIAL_PASSWORD` with `password_temporary = true`. Each
+  installation therefore gets its own admin, and no shared default password exists.
+- **Upgrades:** Cooked's process applies (`db/<branch>/NN_*.sql`, `setup.sql` kept canonical,
+  `release/<branch>.md`). Because dbmig is installed at several sites that each need the same
+  scripts applied in order, adopting Flyway for dbmig is recommended; see §19.
 
 ### 16.2 Environment variables
 
@@ -1355,7 +1696,8 @@ JDBC drivers can be abused through URL parameters. Known examples: PostgreSQL `s
 | `SERVER_PORT` | `8083` | |
 | `CUSTOM_DB_URL` / `CUSTOM_DB_USER` / `CUSTOM_DB_PASS` | none | App DB. URL includes `currentSchema=dbmig`. |
 | `JWT_SECRET` / `JWT_EXPIRATION_MS` | none / `86400000` | |
-| `CORS_ALLOWED_ORIGINS` | none | `dbmig-web` origin |
+| `DBMIG_ADMIN_EMAIL` / `DBMIG_ADMIN_INITIAL_PASSWORD` | none | Used only when no ADMIN exists |
+| `CORS_ALLOWED_ORIGINS` | empty | Dev only. Production is same-origin. |
 | `DBMIG_ENCRYPTION_KEY` | none (**required**) | Base64 32-byte AES key |
 | `DBMIG_ENCRYPTION_KEY_VERSION` | `1` | Active key version |
 | `DBMIG_ALLOWED_HOSTS` | empty (allow all) | Host/CIDR allow-list for migrated databases |
@@ -1364,16 +1706,21 @@ JDBC drivers can be abused through URL parameters. Known examples: PostgreSQL `s
 | `DBMIG_STORE_SAMPLES` | `true` | |
 | `DBMIG_SAMPLE_RETENTION_DAYS` | `30` | |
 | `DBMIG_MAX_UPLOAD_MB` | `20` | Evidence file cap |
+| `DBMIG_MAX_DDL_UPLOAD_MB` | `50` | DDL upload cap (compressed) |
 | `DBMIG_SPILL_DIR` | `/tmp/dbmig` | P2 hash-partition spill |
 
-### 16.3 Network reachability
+### 16.3 Where to install
 
-The backend must reach every source and target database. Options, in order of preference:
+A live comparison needs network access to both databases. Because dbmig is standalone, install
+it where that access exists:
 
-1. Databases reachable from the VPS over TLS, with firewall rules limited to the VPS IP.
-2. **Self-hosted deployment** inside the client's network. The same Docker image and compose
-   file work with no Coolify dependency.
+1. **Inside the client's network**, next to the databases. It is the same image and compose
+   file, and it needs no internet access (§13).
+2. **On the Coolify VPS**, when the databases accept TLS connections from the VPS IP.
 3. SSH tunnel through a bastion (P2, FR-CON-8).
+
+**DDL-only comparisons need no database access**, so any installation, including the VPS, can
+compare uploaded scripts for any client.
 
 ---
 
@@ -1381,12 +1728,13 @@ The backend must reach every source and target database. Options, in order of pr
 
 | Milestone | Scope |
 |---|---|
-| **M0 Foundations** | Repos, `setup.sql`, auth and users, projects and members, audit log, UI shell with `ProjectShell` |
+| **M0 Foundations** | Single repo and Dockerfile, `setup.sql`, `/api` prefix and SPA forwarding, auth and users with admin bootstrap, projects and members, audit log, UI shell with `ProjectShell` |
 | **M1 Checklist** | Templates plus default seed (§6), project checklist, statuses and rules BR-1…BR-5, BR-9, BR-10, comments, evidence, dependencies, gates and sign-off, checklist report (HTML/PDF/XLSX/CSV) |
-| **M2 Schema compare** | Connections with encryption, hardening and test; PostgreSQL + MySQL/MariaDB adapters; canonical model; matcher, type compatibility, severity; job queue; diff viewer; waivers; fix script (PG); schema report; `CONNECTIVITY` and `SCHEMA_CLEAN` auto-checks (BR-6…BR-8) |
-| **M3 Data compare** | `ROW_COUNT`, `PROFILE`, `FULL` merge-join, normalization, masking, mismatch drill-down and lookup SQL, table waivers, data report, target health run (PG), remaining auto-checks, performance validation against §13 |
-| **M4 Readiness** | Overview dashboard, go/no-go, readiness and final reports, JSON exports, retention job, Playwright smoke test. **MVP release.** |
-| **P2** | SQL Server and Oracle adapters, `SAMPLE`, hash pushdown, hash-partition fallback, keyless multiset compare, recheck, resumable runs, run-to-run compare, scheduled runs with trends, notifications, SSH tunnels, Google SSO, project cloning, CSV checklist import/export, branded reports |
+| **M2 Live schema compare** | Connections (encryption, hardening, test) for MySQL, PostgreSQL and Oracle; version-aware adapters across §7.3.1; canonical model; matcher, type compatibility, severity; job queue; diff viewer; waivers; fix scripts for all three dialects; schema report; `CONNECTIVITY` and `SCHEMA_CLEAN` auto-checks (BR-6…BR-8); **parser spike** measuring JSqlParser coverage on real exports |
+| **M3 DDL snapshots** | Upload with dialect detection; splitter, parser and replay for all three dialects; parse report; capture from connection; regenerated DDL; DDL sides in schema runs; quick compare; round-trip tests across the version matrix |
+| **M4 Data compare and health** | `ROW_COUNT`, `PROFILE`, `FULL` merge-join, normalization (including MySQL zero dates and Oracle `''`/NULL), masking, mismatch drill-down and lookup SQL, table waivers, data report, target health checks for all three dialects, remaining auto-checks, performance validation against §13 |
+| **M5 Readiness** | Overview dashboard, go/no-go, readiness and final reports, JSON exports, retention job, Playwright smoke test. **MVP release.** |
+| **P2** | DDL sandbox mode (FR-DDL-9), `SAMPLE`, hash pushdown, hash-partition fallback, keyless multiset compare, recheck, resumable runs, Oracle `AS OF SCN`, run-to-run compare, scheduled runs with trends, notifications, Oracle wallets and Kerberos, SSH tunnels, Google SSO, project cloning, CSV checklist import/export, branded reports |
 
 ---
 
@@ -1395,29 +1743,43 @@ The backend must reach every source and target database. Options, in order of pr
 | Risk | Mitigation |
 |---|---|
 | Full compares load production sources | Throttle, parallelism cap, application name for visibility, `PROFILE`/`ROW_COUNT` defaults for large tables, point source connections at read replicas |
-| Cross-dialect false positives erode trust | Explicit normalization rules shown in reports; key-order safety net (§7.12); waivers with reasons; start with same-dialect and MySQL→PG pairs, then widen |
+| Cross-dialect false positives erode trust | Explicit normalization rules shown in reports; expression normalization; key-order safety net (§7.13); waivers with reasons; the Sakila fixtures test every dialect pair from the start |
+| DDL parser gaps (vendor syntax, PL/SQL) | Nothing is dropped silently: every statement is applied, ignored or failed in the parse report; coverage spike in M2; ANTLR grammars as fallback; routine bodies kept as text; sandbox mode in P2 |
+| DDL and live catalogs format definitions differently | Syntax-tree comparison of expressions; bodies compared by existence and signature when a DDL snapshot is involved (§7.4) |
+| Breadth of versions (Oracle 11g–23ai, MySQL 5.7–9.x, PostgreSQL 9.6–17) | Version-aware adapters and renderers; nightly Testcontainers matrix; isolated class loader if one Oracle driver cannot cover the range |
+| Oracle 12c/19c test images need a license acceptance | Nightly job pulls from Oracle Container Registry with the team's accepted license; XE/Free images cover 11g, 18c, 21c and 23ai on every run |
+| `ORA-01555 snapshot too old` on long Oracle streams | Chunked retry by key range, guidance on `UNDO_RETENTION`, run during the freeze |
 | Credential leakage | Encryption at rest, write-only secrets, read-only accounts recommended and checked, deny-listed driver properties, audit trail |
 | Sensitive data copied into dbmig | Masking before persistence, samples switch, retention purge, counts-only mode |
 | Very large tables take too long | Per-table methods, `SAMPLE` (P2), resumable runs (P2), estimated volume warning in the launcher |
-| Scope creep toward a migration tool | Non-goals in §2; fix scripts are generated, never executed |
+| Scope creep toward a migration tool | Non-goals in §2; fix scripts are generated, never executed; DDL is parsed, never executed |
 | Stale evidence at cutover | `maxAgeHours` on cutover auto-checks; sign-off cleared on regression (BR-6) |
 
 ---
 
 ## 19. Open questions
 
-1. **Which source → target pairs matter first?** This spec assumes PostgreSQL→PostgreSQL and
-   MySQL/MariaDB→PostgreSQL for MVP, with Oracle and SQL Server in P2. Move Oracle up if the
-   first real project is an Oracle exit.
-2. **Internal tool or client-facing product?** Client-facing would push toward tenancy,
-   subscription-service integration (like Cooked's tier gates) and branded reports.
-3. **Where do client databases live** relative to the VPS? This decides whether §16.3 option 2
-   (self-hosted) is needed in MVP.
-4. **Are mismatch samples allowed at all** under client data agreements, or should MVP ship with
-   `DBMIG_STORE_SAMPLES=false` by default?
-5. **Is Google SSO needed at launch**, or is email and password enough?
-6. **Which go/no-go criteria must be configurable per project** in MVP, versus the fixed set in
-   §5.9?
+**Resolved in v0.2**
+
+- Databases: MySQL, PostgreSQL and Oracle, all common versions, all in the MVP (§7.3.1).
+  SQL Server and MariaDB are out of scope.
+- Deployment: standalone application, installed where it can reach the databases (§16).
+- Inputs: two connections, or a DDL script for either side (§5.4, §7.4).
+
+**Still open**
+
+1. **Oldest versions.** The spec supports PostgreSQL 9.6+, MySQL 5.7+ (5.6 best effort) and
+   Oracle 11.2.0.4+. Do you need anything older, such as Oracle 10g or MySQL 5.5?
+2. **One user or a team?** The spec keeps multi-user projects and roles, which also works for a
+   single person. If dbmig is a single-user tool, auth and roles could shrink to one local admin.
+3. **Sandbox mode timing.** Is parse-only DDL enough for MVP, or do PL/SQL-heavy Oracle scripts
+   need sandbox execution (FR-DDL-9) sooner?
+4. **Mismatch samples.** Are they allowed under client data agreements, or should installs
+   default to `DBMIG_STORE_SAMPLES=false`?
+5. **Flyway for app-DB upgrades.** Adopt Flyway because dbmig is installed at several sites, or
+   keep Cooked's manual `db/<branch>/` scripts?
+6. **Go/no-go criteria.** Which must be configurable per project in MVP, versus the fixed set in
+   §5.10?
 
 ---
 
@@ -1459,24 +1821,27 @@ DO $$ BEGIN CREATE TYPE dbmig.app_role            AS ENUM ('ADMIN','USER');     
 DO $$ BEGIN CREATE TYPE dbmig.project_role        AS ENUM ('LEAD','ENGINEER','VIEWER');                       EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.project_status      AS ENUM ('ACTIVE','ON_HOLD','COMPLETED','ARCHIVED');       EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.migration_strategy  AS ENUM ('BIG_BANG','PHASED','TRICKLE_CDC','PARALLEL_RUN'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE TYPE dbmig.db_dialect          AS ENUM ('POSTGRESQL','MYSQL','MARIADB','SQLSERVER','ORACLE'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE dbmig.db_dialect          AS ENUM ('POSTGRESQL','MYSQL','ORACLE');                     EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.connection_side     AS ENUM ('SOURCE','TARGET');                                EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.ssl_mode            AS ENUM ('DISABLE','REQUIRE','VERIFY_CA','VERIFY_FULL');    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.migration_phase     AS ENUM ('DISCOVERY','PLANNING','PREPARATION','SCHEMA','DATA','VALIDATION','CUTOVER','POST_MIGRATION'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.checklist_status    AS ENUM ('NOT_STARTED','IN_PROGRESS','BLOCKED','DONE','NOT_APPLICABLE'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.priority            AS ENUM ('LOW','MEDIUM','HIGH','CRITICAL');                 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE TYPE dbmig.auto_check_type     AS ENUM ('CONNECTIVITY','SCHEMA_CLEAN','ROW_COUNTS_MATCH','DATA_MATCH','SEQUENCES_ALIGNED','FK_INTEGRITY','INDEXES_VALID','STATS_FRESH','TRIGGERS_ENABLED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE dbmig.auto_check_type     AS ENUM ('CONNECTIVITY','SCHEMA_CLEAN','ROW_COUNTS_MATCH','DATA_MATCH','SEQUENCES_ALIGNED','FK_INTEGRITY','INDEXES_VALID','STATS_FRESH','TRIGGERS_ENABLED','OBJECTS_VALID'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.evidence_kind       AS ENUM ('LINK','FILE','RUN','REPORT');                     EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.run_kind            AS ENUM ('SCHEMA','DATA','TARGET_HEALTH');                  EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.job_status          AS ENUM ('QUEUED','RUNNING','SUCCEEDED','FAILED','CANCELLED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.run_outcome         AS ENUM ('PASS','WARN','FAIL');                             EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.data_compare_method AS ENUM ('ROW_COUNT','PROFILE','SAMPLE','FULL');            EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE TYPE dbmig.db_object_type      AS ENUM ('SCHEMA','TABLE','COLUMN','PRIMARY_KEY','FOREIGN_KEY','UNIQUE_CONSTRAINT','CHECK_CONSTRAINT','INDEX','VIEW','MATERIALIZED_VIEW','SEQUENCE','FUNCTION','PROCEDURE','TRIGGER','USER_TYPE'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE dbmig.db_object_type      AS ENUM ('SCHEMA','TABLE','COLUMN','PRIMARY_KEY','FOREIGN_KEY','UNIQUE_CONSTRAINT','CHECK_CONSTRAINT','INDEX','VIEW','MATERIALIZED_VIEW','SEQUENCE','FUNCTION','PROCEDURE','PACKAGE','PACKAGE_BODY','TRIGGER','SYNONYM','USER_TYPE'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.diff_type           AS ENUM ('MISSING_IN_TARGET','EXTRA_IN_TARGET','CHANGED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.severity            AS ENUM ('INFO','WARNING','ERROR');                         EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.table_result_status AS ENUM ('MATCH','MISMATCH','ERROR','SKIPPED');            EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.mismatch_type       AS ENUM ('MISSING_IN_TARGET','EXTRA_IN_TARGET','VALUE_DIFF','DUPLICATE_KEY'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.waiver_scope        AS ENUM ('SCHEMA_DIFF','DATA_TABLE','HEALTH_CHECK');        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE dbmig.input_kind          AS ENUM ('CONNECTION','DDL');                               EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE dbmig.snapshot_origin     AS ENUM ('UPLOAD','CAPTURE');                               EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE dbmig.check_result        AS ENUM ('PASS','FAIL','NOT_APPLICABLE');                   EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.report_type         AS ENUM ('CHECKLIST_STATUS','SCHEMA_COMPARISON','DATA_VALIDATION','READINESS','FINAL_MIGRATION'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE dbmig.report_format       AS ENUM ('HTML','PDF','XLSX','CSV','JSON');                 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
@@ -1540,11 +1905,14 @@ CREATE TABLE IF NOT EXISTS dbmig.project (
   strategy            dbmig.migration_strategy,
   planned_cutover_at  TIMESTAMPTZ,
   enforce_phase_gates BOOLEAN NOT NULL DEFAULT false,
-  template_id         BIGINT REFERENCES dbmig.checklist_template(id) ON DELETE SET NULL,
+  personal            BOOLEAN NOT NULL DEFAULT false,      -- a user's "Quick compares" project
+  template_id         BIGINT REFERENCES dbmig.checklist_template(id) ON DELETE SET NULL,  -- NULL = no checklist
   created_by          BIGINT NOT NULL REFERENCES dbmig.app_user(id),
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_project_personal ON dbmig.project (created_by) WHERE personal;
 
 CREATE TABLE IF NOT EXISTS dbmig.project_member (
   project_id BIGINT NOT NULL REFERENCES dbmig.project(id) ON DELETE CASCADE,
@@ -1565,7 +1933,8 @@ CREATE TABLE IF NOT EXISTS dbmig.db_connection (
   dialect           dbmig.db_dialect NOT NULL,
   host              TEXT NOT NULL,
   port              INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
-  database_name     TEXT NOT NULL,                        -- Oracle: service name
+  database_name     TEXT NOT NULL,                        -- Oracle: service name, or SID when use_sid
+  use_sid           BOOLEAN NOT NULL DEFAULT false,
   username          TEXT NOT NULL,
   password_enc      BYTEA NOT NULL,                       -- AES-256-GCM ciphertext + tag
   password_iv       BYTEA NOT NULL,                       -- 12-byte nonce
@@ -1582,10 +1951,59 @@ CREATE TABLE IF NOT EXISTS dbmig.db_connection (
   created_by        BIGINT REFERENCES dbmig.app_user(id) ON DELETE SET NULL,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (project_id, name)
+  UNIQUE (project_id, name),
+  CONSTRAINT ck_db_connection_sid CHECK (NOT use_sid OR dialect = 'ORACLE')
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_db_connection_default
   ON dbmig.db_connection (project_id, side) WHERE is_default;
+
+-- ──────────────────────────────────────────────
+-- DDL snapshots (uploaded or captured schemas)
+-- ──────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS dbmig.ddl_snapshot (
+  id                 BIGINT GENERATED BY DEFAULT AS IDENTITY (START WITH 100000) PRIMARY KEY,
+  project_id         BIGINT NOT NULL REFERENCES dbmig.project(id) ON DELETE CASCADE,
+  name               TEXT NOT NULL,
+  origin             dbmig.snapshot_origin NOT NULL,
+  dialect            dbmig.db_dialect NOT NULL,
+  dialect_version    TEXT,                                  -- e.g. 19c, 8.0, 16; drives parsing rules
+  dialect_detected   BOOLEAN NOT NULL DEFAULT false,        -- user accepted the auto-detected dialect
+  default_schema     TEXT,                                  -- for unqualified names
+  captured_from_id   BIGINT REFERENCES dbmig.db_connection(id) ON DELETE SET NULL,
+  files              JSONB NOT NULL DEFAULT '[]'::jsonb,    -- [{order, name, sizeBytes, sha256}]
+  content            BYTEA,                                 -- original upload, zipped; NULL for CAPTURE
+  status             dbmig.job_status NOT NULL DEFAULT 'QUEUED',
+  catalog_gz         BYTEA,                                 -- canonical DbCatalog as gzip JSON
+  catalog_sha256     TEXT,                                  -- identifies the parsed schema
+  statements_total   INTEGER,
+  statements_applied INTEGER,
+  statements_ignored INTEGER,
+  statements_failed  INTEGER,
+  object_counts      JSONB,                                 -- {"TABLE":212,"INDEX":388,...}
+  error_message      TEXT,
+  worker_id          TEXT,
+  heartbeat_at       TIMESTAMPTZ,
+  created_by         BIGINT REFERENCES dbmig.app_user(id) ON DELETE SET NULL,
+  queued_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  started_at         TIMESTAMPTZ,
+  finished_at        TIMESTAMPTZ,
+  UNIQUE (project_id, name),
+  CONSTRAINT ck_ddl_snapshot_content CHECK (origin = 'CAPTURE' OR content IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS ix_ddl_snapshot_queue ON dbmig.ddl_snapshot (queued_at) WHERE status = 'QUEUED';
+
+CREATE TABLE IF NOT EXISTS dbmig.ddl_snapshot_message (
+  id          BIGINT GENERATED BY DEFAULT AS IDENTITY (START WITH 100000) PRIMARY KEY,
+  snapshot_id BIGINT NOT NULL REFERENCES dbmig.ddl_snapshot(id) ON DELETE CASCADE,
+  file_name   TEXT,
+  line        INTEGER,
+  severity    dbmig.severity NOT NULL,
+  category    TEXT NOT NULL,                              -- e.g. CONTEXT, IGNORED_SESSION, IGNORED_DML, PARSE_ERROR, UNKNOWN_OBJECT
+  statement   TEXT,                                       -- first 4 KB of the statement
+  message     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_ddl_snapshot_message
+  ON dbmig.ddl_snapshot_message (snapshot_id, severity, file_name, line);
 
 -- ──────────────────────────────────────────────
 -- Comparison profiles & runs
@@ -1607,10 +2025,14 @@ CREATE TABLE IF NOT EXISTS dbmig.comparison_run (
   kind                 dbmig.run_kind NOT NULL,
   method               dbmig.data_compare_method,        -- DATA runs: default method
   profile_id           BIGINT REFERENCES dbmig.comparison_profile(id) ON DELETE SET NULL,
-  config_snapshot      JSONB NOT NULL,                   -- effective config frozen at queue time (no secrets)
+  effective_config     JSONB NOT NULL,                   -- effective config frozen at queue time (no secrets)
+  source_kind          dbmig.input_kind,                 -- NULL for TARGET_HEALTH
+  target_kind          dbmig.input_kind NOT NULL,
   source_connection_id BIGINT REFERENCES dbmig.db_connection(id) ON DELETE SET NULL,
   target_connection_id BIGINT REFERENCES dbmig.db_connection(id) ON DELETE SET NULL,
-  source_label         TEXT,                             -- "ERP-PROD (ORACLE 19.21)" snapshot
+  source_snapshot_id   BIGINT REFERENCES dbmig.ddl_snapshot(id) ON DELETE SET NULL,
+  target_snapshot_id   BIGINT REFERENCES dbmig.ddl_snapshot(id) ON DELETE SET NULL,
+  source_label         TEXT,                             -- "ERP-PROD (ORACLE 19.21)" or "v3.sql (DDL · POSTGRESQL 16 · sha256 9f2c…)"
   target_label         TEXT NOT NULL,
   source_frozen        BOOLEAN,                          -- answer to "Is the source frozen?"
   status               dbmig.job_status NOT NULL DEFAULT 'QUEUED',
@@ -1625,7 +2047,16 @@ CREATE TABLE IF NOT EXISTS dbmig.comparison_run (
   triggered_by         BIGINT REFERENCES dbmig.app_user(id) ON DELETE SET NULL,
   queued_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   started_at           TIMESTAMPTZ,
-  finished_at          TIMESTAMPTZ
+  finished_at          TIMESTAMPTZ,
+  -- allowed side kinds per run kind (FR-DDL-8)
+  CONSTRAINT ck_run_sides_schema CHECK (kind <> 'SCHEMA' OR source_kind IS NOT NULL),
+  CONSTRAINT ck_run_sides_data   CHECK (kind <> 'DATA' OR (source_kind = 'CONNECTION' AND target_kind = 'CONNECTION')),
+  CONSTRAINT ck_run_sides_health CHECK (kind <> 'TARGET_HEALTH' OR (source_kind IS NULL AND target_kind = 'CONNECTION')),
+  -- a side's reference must match its kind (references may become NULL when deleted; labels remain)
+  CONSTRAINT ck_run_source_ref CHECK ((source_connection_id IS NULL OR source_kind = 'CONNECTION')
+                                  AND (source_snapshot_id  IS NULL OR source_kind = 'DDL')),
+  CONSTRAINT ck_run_target_ref CHECK ((target_connection_id IS NULL OR target_kind = 'CONNECTION')
+                                  AND (target_snapshot_id  IS NULL OR target_kind = 'DDL'))
 );
 CREATE INDEX IF NOT EXISTS ix_run_queue   ON dbmig.comparison_run (queued_at) WHERE status = 'QUEUED';
 CREATE INDEX IF NOT EXISTS ix_run_running ON dbmig.comparison_run (heartbeat_at) WHERE status = 'RUNNING';
@@ -1697,7 +2128,7 @@ CREATE TABLE IF NOT EXISTS dbmig.health_check_result (
   run_id      BIGINT NOT NULL REFERENCES dbmig.comparison_run(id) ON DELETE CASCADE,
   check_type  dbmig.auto_check_type NOT NULL,
   object_name TEXT,
-  passed      BOOLEAN NOT NULL,
+  result      dbmig.check_result NOT NULL,              -- NOT_APPLICABLE when the check does not exist on the dialect
   severity    dbmig.severity NOT NULL,
   fingerprint TEXT NOT NULL,
   details     JSONB NOT NULL DEFAULT '{}'::jsonb         -- e.g. {"lastValue":1200,"maxKey":10482}
@@ -1899,6 +2330,7 @@ This maps to a typed `ComparisonConfig` record and is validated with Bean Valida
     "normalization": {
       "trimCharPadding": true,
       "emptyStringIsNull": "AUTO",
+      "zeroDateAsNull": true,
       "caseInsensitiveText": false,
       "unicodeNfc": true,
       "timestampPrecision": "AUTO",
@@ -1914,19 +2346,33 @@ This maps to a typed `ComparisonConfig` record and is validated with Bean Valida
 
 ### B.2 Launch a run: `POST /projects/{projectId}/runs`
 
+Schema run, live Oracle source against an uploaded PostgreSQL DDL snapshot:
+
+```json
+{
+  "kind": "SCHEMA",
+  "profileId": 100004,
+  "source": { "type": "CONNECTION", "connectionId": 100010 },
+  "target": { "type": "DDL", "snapshotId": 100020 }
+}
+```
+
+Data run, two live connections:
+
 ```json
 {
   "kind": "DATA",
   "profileId": 100004,
-  "sourceConnectionId": 100010,
-  "targetConnectionId": 100011,
+  "source": { "type": "CONNECTION", "connectionId": 100010 },
+  "target": { "type": "CONNECTION", "connectionId": 100011 },
   "method": "FULL",
   "tables": ["HR.EMP", "SALES.ORDERS"],
   "sourceFrozen": true
 }
 ```
 
-Response: `202 Accepted`, `Location: /runs/100042`, body `{ "runId": 100042, "status": "QUEUED" }`.
+Response: `202 Accepted`, `Location: /api/runs/100042`, body
+`{ "runId": 100042, "status": "QUEUED" }`.
 
 ### B.3 Run status: `GET /runs/{runId}`
 
@@ -1938,6 +2384,8 @@ Response: `202 Accepted`, `Location: /runs/100042`, body `{ "runId": 100042, "st
   "status": "RUNNING",
   "progressPct": 63,
   "currentStep": "sales.orders (5.1M / 8.1M rows)",
+  "sourceKind": "CONNECTION",
+  "targetKind": "CONNECTION",
   "sourceLabel": "ERP-PROD (MYSQL 8.4.2)",
   "targetLabel": "PG-UAT (POSTGRESQL 16.4)",
   "sourceFrozen": true,
@@ -1988,6 +2436,30 @@ Response: `202 Accepted`, `Location: /runs/100042`, body `{ "runId": 100042, "st
 }
 ```
 
+### B.6 DDL snapshot: `GET /snapshots/{snapshotId}`
+
+```json
+{
+  "id": 100020,
+  "name": "pg_target_v3",
+  "origin": "UPLOAD",
+  "dialect": "POSTGRESQL",
+  "dialectVersion": "16",
+  "defaultSchema": "public",
+  "status": "SUCCEEDED",
+  "files": [
+    { "order": 1, "name": "V1__init.sql",    "sizeBytes": 812334, "sha256": "4b1e…" },
+    { "order": 2, "name": "V2__orders.sql",  "sizeBytes": 20411,  "sha256": "a07c…" },
+    { "order": 3, "name": "V3__billing.sql", "sizeBytes": 55120,  "sha256": "e9d2…" }
+  ],
+  "catalogSha256": "9f2c…",
+  "statements": { "total": 4818, "applied": 4812, "ignored": 3, "failed": 3 },
+  "objectCounts": { "TABLE": 212, "COLUMN": 3120, "INDEX": 388, "FOREIGN_KEY": 190,
+                    "VIEW": 14, "FUNCTION": 22, "SEQUENCE": 40 },
+  "finishedAt": "2026-09-25T07:12:40Z"
+}
+```
+
 ---
 
 ## Appendix C: Dependencies
@@ -2000,12 +2472,14 @@ Response: `202 Accepted`, `Location: /runs/100042`, body `{ "runId": 100042, "st
 | `io.jsonwebtoken:jjwt-api/impl/jackson` 0.12.6 | JWT (same as Cooked) |
 | `org.projectlombok:lombok` | Boilerplate |
 | `org.postgresql:postgresql` | App DB and PostgreSQL adapter |
-| `com.mysql:mysql-connector-j`, `org.mariadb.jdbc:mariadb-java-client` | MySQL and MariaDB adapters |
-| `com.microsoft.sqlserver:mssql-jdbc` (P2), `com.oracle.database.jdbc:ojdbc11` (P2) | SQL Server and Oracle adapters (check the Oracle driver license terms) |
+| `com.mysql:mysql-connector-j` | MySQL adapter |
+| `com.oracle.database.jdbc:ojdbc8` / `ojdbc11` (driver line per §7.3.1), `orai18n` | Oracle adapter; `orai18n` is needed for some non-Unicode database character sets (check the Oracle driver license terms) |
+| `com.github.jsqlparser:jsqlparser` 5.x | DDL parsing (§7.4) |
+| `org.antlr:antlr4-runtime` | Only if the M2 spike needs the grammars-v4 fallback |
 | `io.github.openhtmltopdf:openhtmltopdf-pdfbox` | HTML → PDF (maintained fork) |
 | `org.apache.poi:poi-ooxml` | XLSX (SXSSF streaming) |
 | `org.apache.commons:commons-csv` | CSV |
-| `org.testcontainers:postgresql`, `mysql`, `mariadb`, `mssqlserver`, `oracle-free`, `junit-jupiter` | Integration tests |
+| `org.testcontainers:postgresql`, `mysql`, `oracle-xe`, `oracle-free`, `junit-jupiter` | Integration tests across the version matrix |
 
 **Frontend (`package.json`)**
 
